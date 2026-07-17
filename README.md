@@ -12,7 +12,7 @@ Lexer → Parser → Checker
 
 - Parses `.packet` program files and inline packet expressions
 - Validates headers and attributes against a built-in protocol registry
-- Unit tests mirror the original C++ lexer/parser/checker tests
+- Unit tests mirror the original C++ lexer/parser/checker suite (**98** cases)
 
 ## Build
 

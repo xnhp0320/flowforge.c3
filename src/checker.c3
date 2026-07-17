@@ -3,6 +3,8 @@ import flowforge::ast;
 import flowforge::registry;
 import flowforge::validate;
 import std::collections::list;
+import std::io;
+import std::os;
 
 struct CheckResult {
 	bool ok;
@@ -56,15 +58,34 @@ fn CheckResult Checker.check(&self, Packet packet) {
 				continue;
 			}
 
-			String err_msg = "";
-			if (!validate::validate_scalar_type(type_name, value, &err_msg)) {
-				errors.push(string::tformat("invalid '%s' in header '%s': %s", attr.name, header.protocol, err_msg));
+			String? failing = self.registry.failing_type_message(type_name);
+			if (catch failing) {
+				String err_msg = "";
+				if (!validate::validate_scalar_type(type_name, value, &err_msg)) {
+					errors.push(string::tformat("invalid '%s' in header '%s': %s", attr.name, header.protocol, err_msg));
+					ok = false;
+				}
+			}
+			else {
+				errors.push(string::tformat("invalid '%s' in header '%s': %s", attr.name, header.protocol, failing));
 				ok = false;
 			}
 		}
 	}
 
 	return { .ok = ok, .warnings = warnings.to_tarray(), .errors = errors.to_tarray() };
+}
+
+fn void Checker.validate_or_exit(&self, Packet packet) {
+	CheckResult result = self.check(packet);
+	foreach (w : result.warnings) io::eprintfn("WARNING: %s", w);
+	foreach (e : result.errors) io::eprintfn("ERROR: %s", e);
+	if (!result.ok) {
+		os::exit(1);
+	}
+	if (result.warnings.len) {
+		io::eprintfn("%d warning(s) found.", result.warnings.len);
+	}
 }
 
 fn Checker checker_with_default() => { .registry = registry::create_default_registry() };

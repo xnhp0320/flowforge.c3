@@ -1,7 +1,6 @@
 module flowforge::validate;
 import flowforge::ast;
 import std::net;
-import std::collections::list;
 
 fn int hex_val(char c) {
 	if (c.is_digit()) return (int)(c - '0');
@@ -27,15 +26,37 @@ fn bool validate_mac(String s, String* err) {
 }
 
 fn bool validate_ipv4(String s, String* err) {
-	if (catch net::ipv4_from_str(s)) return true;
-	*err = string::tformat("invalid ipv4 address '%s'", s);
-	return false;
+	if (catch net::ipv4_from_str(s)) {
+		*err = string::tformat("invalid ipv4 address '%s'", s);
+		return false;
+	}
+	return true;
 }
 
 fn bool validate_ipv6(String s, String* err) {
-	if (catch net::ipv6_from_str(s)) return true;
-	*err = string::tformat("invalid ipv6 address '%s'", s);
-	return false;
+	if (catch net::ipv6_from_str(s)) {
+		*err = string::tformat("invalid ipv6 address '%s'", s);
+		return false;
+	}
+	return true;
+}
+
+fn bool parse_prefix(String s, int max_prefix, String* error) {
+	String mask = s.trim();
+	if (!mask.len) {
+		*error = "empty CIDR mask";
+		return false;
+	}
+	int? prefix = mask.to_int();
+	if (catch prefix) {
+		*error = string::tformat("invalid CIDR mask '%s'", mask);
+		return false;
+	}
+	if (prefix < 0 || prefix > max_prefix) {
+		*error = string::tformat("CIDR mask %d out of range [0,%d]", prefix, max_prefix);
+		return false;
+	}
+	return true;
 }
 
 fn bool parse_ipv4_range(String raw, String* error) {
@@ -45,116 +66,135 @@ fn bool parse_ipv4_range(String raw, String* error) {
 		if (catch slash) return false;
 		String ip_part = (usz)slash > 0 ? s[..(usz)slash - 1].trim() : "";
 		String mask_part = s[(usz)slash + 1..].trim();
-		if (catch net::ipv4_from_str(ip_part)) {
-			*error = string::tformat("invalid ipv4 address '%s'", ip_part);
-			return false;
-		}
-		int? prefix = mask_part.to_int();
-		if (catch prefix) {
-			*error = string::tformat("invalid CIDR mask '%s'", mask_part);
-			return false;
-		}
-		if (prefix < 0 || prefix > 32) {
-			*error = string::tformat("invalid CIDR mask '%s'", mask_part);
-			return false;
-		}
-		return true;
+		if (!validate_ipv4(ip_part, error)) return false;
+		return parse_prefix(mask_part, 32, error);
 	}
 	if (s.contains("-")) {
 		sz? dash = s.index_of_char('-');
 		if (catch dash) return false;
 		String left = (usz)dash > 0 ? s[..(usz)dash - 1].trim() : "";
 		String right = s[(usz)dash + 1..].trim();
-		if (catch net::ipv4_from_str(left)) {
-			*error = string::tformat("invalid ipv4 address '%s'", left);
-			return false;
-		}
-		if (catch net::ipv4_from_str(right)) {
-			*error = string::tformat("invalid ipv4 address '%s'", right);
-			return false;
-		}
-		return true;
+		if (!validate_ipv4(left, error)) return false;
+		return validate_ipv4(right, error);
 	}
-	if (catch net::ipv4_from_str(s)) {
-		*error = string::tformat("invalid ipv4 address '%s'", s);
-		return false;
-	}
-	return true;
+	return validate_ipv4(s, error);
 }
 
-fn bool validate_ipv4_range(String s, String* err) {
-	if (parse_ipv4_range(s, err)) return true;
-	if (!err.len) *err = string::tformat("invalid ipv4 range '%s'", s);
-	return false;
-}
+fn bool validate_ipv4_range(String s, String* err) => parse_ipv4_range(s, err);
 
 fn bool validate_ipv4_ranges(String s, String* err) {
 	String raw = s.trim();
-	if (raw.len && raw[0] == '[') {
-		if (raw.len < 2 || raw[^1] != ']') {
-			*err = string::tformat("malformed range list '%s'", s);
-			return false;
-		}
-		String content = raw[1..raw.len - 2].trim();
-		if (!content.len) {
-			*err = "empty range list";
-			return false;
-		}
-		usz start = 0;
-		while (start <= content.len) {
-			sz? comma = content.index_of_char_from(',', (sz)start);
-			String item;
-			if (catch comma) {
-				item = content[start..].trim();
-			}
-			else {
-				item = (usz)comma > start ? content[start..(usz)comma - 1].trim() : "";
-			}
-			if (!item.len) {
-				*err = string::tformat("empty range in list '%s'", s);
-				return false;
-			}
-			if (!validate_ipv4_range(item, err)) return false;
-			if (catch comma) break;
-			start = (usz)comma + 1;
-		}
-		return true;
+	if (!(raw.len && raw[0] == '[') && !raw.ends_with("]")) {
+		return validate_ipv4_range(s, err);
 	}
-	return validate_ipv4_range(s, err);
-}
-
-fn bool validate_ipv6_range(String s, String* err) {
-	String raw = s.trim();
-	if (raw.contains("-")) {
-		sz? dash = raw.index_of_char('-');
-		if (catch dash) return false;
-		String left = (usz)dash > 0 ? raw[..(usz)dash - 1].trim() : "";
-		String right = raw[(usz)dash + 1..].trim();
-		if (catch net::ipv6_from_str(left)) {
-			*err = string::tformat("invalid ipv6 address '%s'", left);
-			return false;
-		}
-		if (catch net::ipv6_from_str(right)) {
-			*err = string::tformat("invalid ipv6 address '%s'", right);
-			return false;
-		}
-		return true;
+	if (!(raw.len && raw[0] == '[') || !raw.ends_with("]")) {
+		*err = string::tformat("malformed range list '%s'", s);
+		return false;
 	}
-	if (catch net::ipv6_from_str(raw)) {
-		return validate_ipv6(raw, err);
+	String content = raw.len >= 2 ? raw[1..raw.len - 2] : "";
+	if (!content.trim().len) {
+		*err = "empty range list";
+		return false;
+	}
+	usz start = 0;
+	usz index = 0;
+	while (start <= content.len) {
+		sz? comma = content.index_of_char_from(',', (sz)start);
+		String item;
+		if (catch comma) {
+			item = content[start..].trim();
+		}
+		else {
+			item = (usz)comma > start ? content[start..(usz)comma - 1].trim() : "";
+		}
+		if (!item.len) {
+			*err = string::tformat("empty range at index %d", index);
+			return false;
+		}
+		String item_err = "";
+		if (!parse_ipv4_range(item, &item_err)) {
+			*err = string::tformat("invalid range at index %d: %s", index, item_err);
+			return false;
+		}
+		if (catch comma) break;
+		start = (usz)comma + 1;
+		index++;
 	}
 	return true;
 }
 
-fn bool validate_ipv6_ranges(String s, String* err) => validate_ipv6_range(s, err);
+fn bool parse_ipv6_range(String raw, String* error) {
+	String s = raw.trim();
+	if (s.contains("/")) {
+		sz? slash = s.index_of_char('/');
+		if (catch slash) return false;
+		String ip_part = (usz)slash > 0 ? s[..(usz)slash - 1].trim() : "";
+		String mask_part = s[(usz)slash + 1..].trim();
+		if (!validate_ipv6(ip_part, error)) return false;
+		return parse_prefix(mask_part, 128, error);
+	}
+	if (s.contains("-")) {
+		sz? dash = s.index_of_char('-');
+		if (catch dash) return false;
+		String left = (usz)dash > 0 ? s[..(usz)dash - 1].trim() : "";
+		String right = s[(usz)dash + 1..].trim();
+		if (!validate_ipv6(left, error)) return false;
+		return validate_ipv6(right, error);
+	}
+	return validate_ipv6(s, error);
+}
+
+fn bool validate_ipv6_range(String s, String* err) => parse_ipv6_range(s, err);
+
+fn bool validate_ipv6_ranges(String s, String* err) {
+	String raw = s.trim();
+	if (!(raw.len && raw[0] == '[') && !raw.ends_with("]")) {
+		return validate_ipv6_range(s, err);
+	}
+	if (!(raw.len && raw[0] == '[') || !raw.ends_with("]")) {
+		*err = string::tformat("malformed range list '%s'", s);
+		return false;
+	}
+	String content = raw.len >= 2 ? raw[1..raw.len - 2] : "";
+	if (!content.trim().len) {
+		*err = "empty range list";
+		return false;
+	}
+	usz start = 0;
+	usz index = 0;
+	while (start <= content.len) {
+		sz? comma = content.index_of_char_from(',', (sz)start);
+		String item;
+		if (catch comma) {
+			item = content[start..].trim();
+		}
+		else {
+			item = (usz)comma > start ? content[start..(usz)comma - 1].trim() : "";
+		}
+		if (!item.len) {
+			*err = string::tformat("empty range at index %d", index);
+			return false;
+		}
+		String item_err = "";
+		if (!parse_ipv6_range(item, &item_err)) {
+			*err = string::tformat("invalid range at index %d: %s", index, item_err);
+			return false;
+		}
+		if (catch comma) break;
+		start = (usz)comma + 1;
+		index++;
+	}
+	return true;
+}
 
 faultdef UNKNOWN_TYPE;
 
+fn bool is_bit_ranges_type(String type_name) {
+	return type_name.ends_with("_ranges") && type_name.len > 8 && type_name[0] == 'b';
+}
+
 fn usz? bit_width_for_type(String type_name) {
-	if (type_name == "mac") return 48;
-	if (type_name == "ipv4" || type_name == "ipv4_range" || type_name == "ipv4_ranges") return 32;
-	if (type_name == "ipv6" || type_name == "ipv6_range" || type_name == "ipv6_ranges") return 128;
-	if (type_name.ends_with("_ranges") && type_name.len > 8 && type_name[0] == 'b') {
+	if (is_bit_ranges_type(type_name)) {
 		ulong? width = type_name[1..type_name.len - 8].to_ulong();
 		if (catch width) return UNKNOWN_TYPE~;
 		if (width < 1 || width > 64) return UNKNOWN_TYPE~;
@@ -185,11 +225,11 @@ fn bool validate_bit_value(long integer, usz bit_width, String* err) {
 	return true;
 }
 
-fn bool parse_uint_value(String raw, usz bit_width, String* error) {
+fn ulong? parse_uint_value(String raw, usz bit_width, String* error) {
 	String s = raw.trim();
 	if (!s.len) {
 		*error = "empty integer value";
-		return false;
+		return PARSE_UINT~;
 	}
 	int base = 10;
 	if (s.starts_with("0x") || s.starts_with("0X")) {
@@ -200,23 +240,89 @@ fn bool parse_uint_value(String raw, usz bit_width, String* error) {
 		base = 2;
 		s = s[2..];
 	}
+	if (!s.len) {
+		*error = string::tformat("invalid integer value '%s'", raw);
+		return PARSE_UINT~;
+	}
 	ulong? value = s.to_ulong(base);
 	if (catch value) {
 		*error = string::tformat("invalid integer value '%s'", raw);
-		return false;
+		return PARSE_UINT~;
 	}
 	if (bit_width < 64) {
 		ulong max = (1UL << bit_width) - 1;
 		if (value > max) {
 			*error = string::tformat("value %d does not fit in %d bits", value, bit_width);
+			return PARSE_UINT~;
+		}
+	}
+	return value;
+}
+
+faultdef PARSE_UINT;
+
+fn bool parse_uint_range(String raw, usz bit_width, String* error) {
+	String s = raw.trim();
+	if (s.contains("-")) {
+		sz? dash = s.index_of_char('-');
+		if (catch dash) return false;
+		ulong? left = parse_uint_value((usz)dash > 0 ? s[..(usz)dash - 1].trim() : "", bit_width, error);
+		if (catch left) return false;
+		ulong? right = parse_uint_value(s[(usz)dash + 1..].trim(), bit_width, error);
+		if (catch right) return false;
+		if (left > right) {
+			*error = string::tformat("range start %d is greater than range end %d", left, right);
 			return false;
 		}
+		return true;
+	}
+	ulong? value = parse_uint_value(s, bit_width, error);
+	if (catch value) return false;
+	return true;
+}
+
+fn bool parse_uint_ranges(String raw, usz bit_width, String* error) {
+	String s = raw.trim();
+	if (!(s.len && s[0] == '[') && !s.ends_with("]")) {
+		return parse_uint_range(s, bit_width, error);
+	}
+	if (!(s.len && s[0] == '[') || !s.ends_with("]")) {
+		*error = string::tformat("malformed range list '%s'", raw);
+		return false;
+	}
+	String content = s.len >= 2 ? s[1..s.len - 2] : "";
+	if (!content.trim().len) {
+		*error = "empty range list";
+		return false;
+	}
+	usz start = 0;
+	usz index = 0;
+	while (start <= content.len) {
+		sz? comma = content.index_of_char_from(',', (sz)start);
+		String item;
+		if (catch comma) {
+			item = content[start..].trim();
+		}
+		else {
+			item = (usz)comma > start ? content[start..(usz)comma - 1].trim() : "";
+		}
+		if (!item.len) {
+			*error = string::tformat("empty range at index %d", index);
+			return false;
+		}
+		String item_err = "";
+		if (!parse_uint_range(item, bit_width, &item_err)) {
+			*error = string::tformat("invalid range at index %d: %s", index, item_err);
+			return false;
+		}
+		if (catch comma) break;
+		start = (usz)comma + 1;
+		index++;
 	}
 	return true;
 }
 
-fn bool validate_bit_range_value(String type_name, ScalarValue value, String* err) {
-	usz bit_width = bit_width_for_type(type_name)!!;
+fn bool validate_bit_range_value(usz bit_width, ScalarValue value, String* err) {
 	if (value.kind == ScalarKind.INTEGER) {
 		return validate_bit_value(value.int_val, bit_width, err);
 	}
@@ -224,54 +330,21 @@ fn bool validate_bit_range_value(String type_name, ScalarValue value, String* er
 		*err = "expected integer or string value";
 		return false;
 	}
-
 	String raw = value.string_val.trim();
-	if (raw.len && raw[0] == '[') {
-		if (raw.len < 2 || raw[^1] != ']') {
-			*err = string::tformat("malformed range list '%s'", raw);
-			return false;
-		}
-		String content = raw[1..raw.len - 2].trim();
-		if (!content.len) {
-			*err = "empty range list";
-			return false;
-		}
-		usz start = 0;
-		while (start <= content.len) {
-			sz? comma = content.index_of_char_from(',', (sz)start);
-			String item;
-			if (catch comma) {
-				item = content[start..].trim();
-			}
-			else {
-				item = (usz)comma > start ? content[start..(usz)comma - 1].trim() : "";
-			}
-			if (!item.len) {
-				*err = "empty range in list";
-				return false;
-			}
-			if (item.contains("-")) {
-				sz? dash = item.index_of_char('-');
-				if (catch dash) return false;
-				if (!parse_uint_value((usz)dash > 0 ? item[..(usz)dash - 1].trim() : "", bit_width, err)) return false;
-				if (!parse_uint_value(item[(usz)dash + 1..].trim(), bit_width, err)) return false;
-			}
-			else if (!parse_uint_value(item, bit_width, err)) {
-				return false;
-			}
-			if (catch comma) break;
-			start = (usz)comma + 1;
-		}
-		return true;
+	if ((raw.len && raw[0] == '[') || raw.ends_with("]") || raw.contains("-")) {
+		return parse_uint_ranges(raw, bit_width, err);
 	}
-	if (raw.contains("-")) {
-		sz? dash = raw.index_of_char('-');
-		if (catch dash) return false;
-		if (!parse_uint_value((usz)dash > 0 ? raw[..(usz)dash - 1].trim() : "", bit_width, err)) return false;
-		if (!parse_uint_value(raw[(usz)dash + 1..].trim(), bit_width, err)) return false;
-		return true;
+	ulong? parsed = parse_uint_value(raw, bit_width, err);
+	if (catch parsed) return false;
+	return true;
+}
+
+fn bool validate_plain_bit_value(usz bit_width, ScalarValue value, String* err) {
+	if (value.kind != ScalarKind.INTEGER) {
+		*err = "expected integer value";
+		return false;
 	}
-	return parse_uint_value(raw, bit_width, err);
+	return validate_bit_value(value.int_val, bit_width, err);
 }
 
 fn bool validate_scalar_type(String type_name, ScalarValue value, String* err) {
@@ -319,14 +392,14 @@ fn bool validate_scalar_type(String type_name, ScalarValue value, String* err) {
 			}
 			return validate_ipv6_ranges(value.string_val, err);
 		default:
-			if (type_name.len > 1 && type_name[0] == 'b') {
-				if (catch bit_width_for_type(type_name)) {
-					*err = string::tformat("unsupported type '%s'", type_name);
-					return false;
-				}
-				return validate_bit_range_value(type_name, value, err);
+			usz? width = bit_width_for_type(type_name);
+			if (catch width) {
+				*err = string::tformat("unsupported type '%s'", type_name);
+				return false;
 			}
-			*err = string::tformat("unsupported type '%s'", type_name);
-			return false;
+			if (is_bit_ranges_type(type_name)) {
+				return validate_bit_range_value(width, value, err);
+			}
+			return validate_plain_bit_value(width, value, err);
 	}
 }
