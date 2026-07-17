@@ -9,6 +9,7 @@ alias HeaderAttrMap = HashMap{String, StringMap};
 struct Registry {
 	HashMap{String, StringSet} attr_names;
 	HeaderAttrMap attr_types;
+	HashMap{String, String} failing_types;
 	Allocator allocator;
 }
 
@@ -16,6 +17,7 @@ fn void Registry.init(&self, Allocator allocator) {
 	self.allocator = allocator;
 	self.attr_names.init(allocator);
 	self.attr_types.init(allocator);
+	self.failing_types.init(allocator);
 }
 
 fn void Registry.tinit(&self) => self.init(tmem);
@@ -117,7 +119,17 @@ fn String? Registry.attr_type(&self, String protocol, String attr) {
 	return types.get(attr);
 }
 
+fn void Registry.add_failing_type(&self, String type_name, String message) {
+	self.failing_types.set(type_name, message);
+}
+
+fn String? Registry.failing_type_message(&self, String type_name) {
+	if (!self.failing_types.has_key(type_name)) return NO_ATTR~;
+	return self.failing_types.get(type_name);
+}
+
 fn void Registry.free(&self) {
 	self.attr_names.free();
 	self.attr_types.free();
+	self.failing_types.free();
 }
