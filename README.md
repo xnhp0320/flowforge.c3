@@ -14,9 +14,9 @@ Lexer → Parser → Checker
 - Validates headers and attributes against a built-in protocol registry
 - Unit tests mirror the original C++ lexer/parser/checker suite (**98** cases)
 
-## Phase 2 (in progress)
+## Phase 2
 
-Adding the constructor stage, porting `PacketConstructorBuilder` from the C++
+Constructor stage, porting `PacketConstructorBuilder` from the C++
 `packet_editor`:
 
 ```
@@ -32,7 +32,27 @@ Lexer → Parser → Checker → Constructor
   attribute values, duplicate/unknown attribute detection, nested
   packet-valued options, IP/TCP option length fields, `Payload`
   `length`/`total_length`, and inference-rule propagation)
-- The serializer, pcap writer, and DPDK runtime are not implemented yet.
+
+## Phase 3 (in progress)
+
+Serializer stage, porting `packet_serializer` from the C++ `packet_editor`:
+
+```
+Lexer → Parser → Checker → Constructor → Serializer
+```
+
+- `src/serializer.c3` —
+  - `serialize_packet()` writes a `PacketConstructor` into a byte buffer
+    (bit/byte field writers, IP/TCP option-packet nesting, `Payload` length
+    extension) and returns `PayloadFieldModifier`s that record range-valued
+    fields (IPv4/IPv6/integer ranges) so later flow-expansion code can index
+    into the range list and patch a specific value into the payload.
+  - `plan_packet_fixups()` / `fixup_packet()` compute and apply IPv4/IPv6/
+    TCP/UDP/ICMP length and checksum fixups, with a `FixupMode` of
+    `SOFTWARE`, `HARDWARE_OFFLOAD`, or `DISABLED` per protocol; hardware
+    offload mode records a `PacketOffloadRequest` (layer lengths + which
+    checksums to offload) instead of computing the checksum in software.
+- The pcap writer and DPDK runtime are not implemented yet.
 
 ## Build
 
@@ -55,8 +75,8 @@ c3c run -- examples/tap_runtime.packet
 ## Layout
 
 - `src/` — lexer, parser, AST, registry, validators, checker, value/constructor
-  types, CLI
+  types, serializer, CLI
 - `test/` — unit tests
 - `examples/` — sample packet programs (copied from packet_editor)
 
-Later phases: serializer, pcap writer, DPDK runtime.
+Later phases: pcap writer, DPDK runtime.

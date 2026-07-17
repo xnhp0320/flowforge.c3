@@ -17,8 +17,10 @@ struct FieldConstructor {
 struct OptionConstructor {
 	String name;
 	AttrValueKind value_kind;
-	ConstructorValue scalar_value;
-	PacketConstructor packet_value;
+	union {
+		ConstructorValue scalar_value;
+		PacketConstructor packet_value;
+	}
 	bool explicitly_set;
 }
 
