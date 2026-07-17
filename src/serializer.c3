@@ -23,9 +23,11 @@ struct PayloadFieldModifier {
 	usz bit_width;
 	ulong value_count;
 	ModifierValueKind values_kind;
-	UIntRange[] uint_ranges;
-	IPv4Range[] ipv4_ranges;
-	IPv6Range[] ipv6_ranges;
+	union {
+		UIntRange[] uint_ranges;
+		IPv4Range[] ipv4_ranges;
+		IPv6Range[] ipv6_ranges;
+	}
 }
 
 struct SerializeResult {

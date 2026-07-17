@@ -118,15 +118,17 @@ enum ConstructorValueKind {
 
 struct ConstructorValue {
 	ConstructorValueKind kind;
-	ulong uint_val;
-	MacAddr mac_val;
-	IPv4 ipv4_val;
-	IPv6 ipv6_val;
-	IPv4Range ipv4_range_val;
-	IPv6Range ipv6_range_val;
-	IPv4Range[] ipv4_ranges_val;
-	IPv6Range[] ipv6_ranges_val;
-	UIntRange[] uint_ranges_val;
+	union {
+		ulong uint_val;
+		MacAddr mac_val;
+		IPv4 ipv4_val;
+		IPv6 ipv6_val;
+		IPv4Range ipv4_range_val;
+		IPv6Range ipv6_range_val;
+		IPv4Range[] ipv4_ranges_val;
+		IPv6Range[] ipv6_ranges_val;
+		UIntRange[] uint_ranges_val;
+	}
 }
 
 fn ConstructorValue cv_uint(ulong v) {
