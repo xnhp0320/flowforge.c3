@@ -13,9 +13,10 @@ struct CheckResult {
 }
 
 struct Checker {
-	Registry registry;
+	Registry* registry;
 }
 
+<* @param [&in] self : `checking never mutates the checker or its registry` *>
 fn CheckResult Checker.check(&self, Packet packet) {
 	List{String} warnings;
 	warnings.tinit();
@@ -89,4 +90,4 @@ fn void Checker.validate_or_exit(&self, Packet packet) {
 	}
 }
 
-fn Checker checker_with_default() => { .registry = registry::create_default_registry() };
+fn Checker checker_with_default() => { .registry = mem::tnew(Registry, registry::create_default_registry()) };

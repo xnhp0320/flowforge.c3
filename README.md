@@ -53,7 +53,7 @@ Lexer → Parser → Checker → Constructor → Serializer
     offload mode records a `PacketOffloadRequest` (layer lengths + which
     checksums to offload) instead of computing the checksum in software.
 
-## Phase 4 (in progress)
+## Phase 4
 
 File mode — DPDK-free packet generation and pcap output, porting
 `packet_generator` and `pcap_writer` from the C++ `packet_editor`:
@@ -71,6 +71,9 @@ Lexer → Parser → Checker → Constructor → Serializer → Generator → Pc
   fixup plan), so millions of flows expand without re-serializing.
 - `src/pcap.c3` — `PcapWriter` appends a classic little-endian pcap
   header and per-packet records (Ethernet link type) to a byte buffer.
+- `src/main.c3` — the `ffg` CLI wires file mode together: `-w <out.pcap>`
+  expands a program/expression into flows and writes them to a pcap
+  (`-c <count>` caps the expansion).
 - Unit tests mirror the C++ `test_file_mode` suite (**5** cases).
 - The DPDK runtime is not implemented yet.
 
@@ -91,6 +94,22 @@ c3c run -- examples/tap_runtime.packet
 ./build/ffg -e 'Ether()/IP(src="10.0.0.1")/TCP(dport=80)'
 ./build/ffg --parse-only examples/tap_runtime.packet   # syntax only, no registry check
 ```
+
+### File mode (write a pcap)
+
+Expands range fields into flows and writes the packets to a pcap file
+(checksums/lengths are fixed up per flow):
+
+```bash
+# From a program file (uses its PACKET_COUNT: unless -c overrides it)
+./build/ffg -w out.pcap examples/tap_runtime.packet
+
+# From an inline expression, capping the range expansion at 12 flows
+./build/ffg -w out.pcap -c 12 -e 'Ether()/IP(src="[10.0.0.1-10.0.0.4]")/TCP(sport="[10000-10002]",dport=443)'
+```
+
+`-w`/`--write <file>` selects file mode; `-c`/`--count <n>` caps the number
+of generated packets (defaults to the full cartesian product of all ranges).
 
 ## Layout
 
