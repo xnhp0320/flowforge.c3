@@ -2,9 +2,11 @@ module flowforge::registry;
 import std::collections::map;
 import std::collections::set;
 import std::collections::list;
+import std::collections::maybe;
 import flowforge::value;
 import flowforge::cvalue;
 
+alias MaybeConstructorValue = Maybe{ConstructorValue};
 alias StringSet = HashSet{String};
 alias StringMap = HashMap{String, String};
 alias HeaderAttrMap = HashMap{String, StringMap};
@@ -26,8 +28,7 @@ struct OptionSpec {
 	String name;
 	String type_name;
 	AttrValueKind value_kind;
-	bool has_default;
-	ConstructorValue default_value;
+	MaybeConstructorValue default_value;
 }
 
 struct HeaderSpec {
@@ -48,8 +49,7 @@ struct InferenceRule {
 struct FieldInput {
 	String name;
 	String type_name;
-	bool has_default;
-	ConstructorValue default_value;
+	MaybeConstructorValue default_value;
 }
 
 <* Input helper describing an option to register. *>
@@ -57,28 +57,31 @@ struct OptionInput {
 	String name;
 	String type_name;
 	AttrValueKind value_kind;
-	bool has_default;
-	ConstructorValue default_value;
+	MaybeConstructorValue default_value;
 }
 
 fn FieldInput fld(String name, String type_name) {
-	return { .name = name, .type_name = type_name, .has_default = false };
+	return { .name = name, .type_name = type_name };
 }
 
 fn FieldInput fldd(String name, String type_name, ConstructorValue default_value) {
-	return { .name = name, .type_name = type_name, .has_default = true, .default_value = default_value };
+	FieldInput fi = { .name = name, .type_name = type_name };
+	fi.default_value.set(default_value);
+	return fi;
 }
 
 fn OptionInput opt_scalar(String name, String type_name) {
-	return { .name = name, .type_name = type_name, .value_kind = AttrValueKind.SCALAR, .has_default = false };
+	return { .name = name, .type_name = type_name, .value_kind = AttrValueKind.SCALAR };
 }
 
 fn OptionInput opt_scalar_default(String name, String type_name, ConstructorValue default_value) {
-	return { .name = name, .type_name = type_name, .value_kind = AttrValueKind.SCALAR, .has_default = true, .default_value = default_value };
+	OptionInput oi = { .name = name, .type_name = type_name, .value_kind = AttrValueKind.SCALAR };
+	oi.default_value.set(default_value);
+	return oi;
 }
 
 fn OptionInput opt_packet(String name) {
-	return { .name = name, .type_name = "", .value_kind = AttrValueKind.PACKET, .has_default = false };
+	return { .name = name, .type_name = "", .value_kind = AttrValueKind.PACKET };
 }
 
 struct Registry {
@@ -137,9 +140,14 @@ fn void Registry.register_header(&self, String protocol, FieldInput[] fields, Op
 		names.add(f.name);
 		types.set(f.name, f.type_name);
 		usz width = cvalue::bit_width_for_type_name(f.type_name);
-		ConstructorValue def = f.has_default
-			? f.default_value
-			: cvalue::default_constructor_value_for_type(f.type_name);
+		ConstructorValue def;
+		ConstructorValue? user_def = f.default_value.get();
+		if (try user_def) {
+			def = user_def;
+		}
+		else {
+			def = cvalue::default_constructor_value_for_type(f.type_name);
+		}
 		field_list.push({
 			.name = f.name,
 			.type_name = f.type_name,
@@ -159,7 +167,6 @@ fn void Registry.register_header(&self, String protocol, FieldInput[] fields, Op
 			.name = o.name,
 			.type_name = o.type_name,
 			.value_kind = o.value_kind,
-			.has_default = o.has_default,
 			.default_value = o.default_value,
 		});
 	}

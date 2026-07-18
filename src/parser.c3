@@ -110,8 +110,7 @@ fn Attribute? Parser.parse_attribute(&self) {
 		if (catch self.lexer.next()) return PARSE_ERROR~;
 		Expression? expression = self.parse_expression();
 		if (catch expression) return PARSE_ERROR~;
-		attr.has_value = true;
-		attr.value = expression;
+		attr.value.set(expression);
 	}
 	return attr;
 }
@@ -148,7 +147,6 @@ fn Expression? scalar_to_expression(ScalarValue value) {
 		case ScalarKind.INTEGER: return ast::expr_integer(value.int_val);
 		default: return PARSE_ERROR~;
 	}
-	return PARSE_ERROR~;
 }
 
 fn Header? Parser.parse_header(&self) {
