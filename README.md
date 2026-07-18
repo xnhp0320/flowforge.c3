@@ -146,6 +146,19 @@ Live flags: `--clone <n>`, `--split`, `--once`, `--stats-interval <sec>`,
 `--capture [<out.pcap>]`. A program is treated as a live runtime program when it
 declares a `DPDK_ARGS` variable; `--check` forces the DPDK-free check instead.
 
+### End-to-end TAP tests (needs root)
+
+A `pytest`/`scapy` suite in `tests/e2e/` drives the built `ffg` over a DPDK TAP
+port and verifies the packets that reach the wire (normal L4, IP/TCP options,
+VXLAN encapsulation, cartesian ranges, `--clone`/`--split` worker partitioning,
+and `--capture`). It requires root, `/dev/net/tun`, `pytest`, and `scapy`.
+
+```bash
+pip install pytest scapy
+c3c build
+sudo FFG_RUNTIME=$PWD/build/ffg python3 -m pytest tests/e2e/ -v
+```
+
 ## CLI
 
 ```bash

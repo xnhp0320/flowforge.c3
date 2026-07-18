@@ -30,6 +30,12 @@ const ushort RUNTIME_MAX_RX_BATCH_SIZE = 128;
 const uint RUNTIME_CAPTURE_MBUF_COUNT = 8191;
 const usz RUNTIME_MAX_LCORES = 128;
 
+// DPDK worker lcores run on threads that c3c never sees, so they have no
+// implicitly-created temp allocator. Each worker entry point installs its own
+// pool via `@pool_init` before touching any tmem-backed helper (e.g. the
+// `string::tformat` used on error paths).
+const usz RUNTIME_WORKER_POOL_SIZE = 256 * 1024;
+
 const String RUNTIME_TAP_NAME = "net_tap0";
 const String RUNTIME_TAP_ARGS = "iface=packet_tap0,mac=fixed";
 const String RUNTIME_TAP_IFACE = "packet_tap0";
@@ -306,8 +312,26 @@ fn bool transmit_batch(WorkerContext* context, Mbuf** packets, ushort count) @pr
 	return prepared == count;
 }
 
+// Worker error strings are built with tmem but are read back by the main thread
+// after the worker's pool is destroyed, so copy them onto the (main-owned) heap
+// list before the pool unwinds.
+fn void heapify_errors(List{String}* errors) @private {
+	foreach (i, e : errors) {
+		errors.set(i, e.copy(mem));
+	}
+}
+
 fn int run_worker_once(void* arg) @private {
 	WorkerContext* context = arg;
+	int rc;
+	@pool_init(mem, RUNTIME_WORKER_POOL_SIZE) {
+		rc = run_worker_once_impl(context);
+		heapify_errors(&context.errors);
+	};
+	return rc;
+}
+
+fn int run_worker_once_impl(WorkerContext* context) @private {
 	Mbuf*[RUNTIME_MAX_TX_BATCH_SIZE] batch;
 	ulong planned = context.flow_count * context.clone_count;
 	if (planned == 0) return 0;
@@ -339,6 +363,15 @@ fn int run_worker_once(void* arg) @private {
 
 fn int run_worker(void* arg) @private {
 	WorkerContext* context = arg;
+	int rc;
+	@pool_init(mem, RUNTIME_WORKER_POOL_SIZE) {
+		rc = run_worker_impl(context);
+		heapify_errors(&context.errors);
+	};
+	return rc;
+}
+
+fn int run_worker_impl(WorkerContext* context) @private {
 	Mbuf*[RUNTIME_MAX_TX_BATCH_SIZE] batch;
 	if (context.flow_count == 0) return 0;
 
@@ -369,6 +402,14 @@ fn int run_worker(void* arg) @private {
 
 fn int run_rx_worker(void* arg) @private {
 	RxWorkerContext* context = arg;
+	int rc;
+	@pool_init(mem, RUNTIME_WORKER_POOL_SIZE) {
+		rc = run_rx_worker_impl(context);
+	};
+	return rc;
+}
+
+fn int run_rx_worker_impl(RxWorkerContext* context) @private {
 	Mbuf*[RUNTIME_MAX_RX_BATCH_SIZE] mbufs;
 
 	while (!runtime_stop_requested) {
@@ -530,7 +571,9 @@ fn bool run_traffic(ushort port_id, Mempool* mbuf_pool, PacketGenerator* generat
 		context.packet = packet;
 		context.batch_size = batch_size;
 
-		int rc = options.once ? run_worker_once(&context) : run_worker(&context);
+		// Called on the main thread, which already owns a temp allocator, so run
+		// the impls directly (the `@pool_init` wrappers are only for lcore threads).
+		int rc = options.once ? run_worker_once_impl(&context) : run_worker_impl(&context);
 		result.tx_attempted += context.tx_attempted;
 		result.tx_sent += context.tx_sent;
 		workers.push(make_worker_result(&context));
@@ -914,7 +957,8 @@ fn void run_capture(Config config, String eal_program_name, RunOptions options, 
 			context.port_id = RUNTIME_PORT_ID;
 			context.queue_id = 0;
 			context.batch_size = RUNTIME_RX_BATCH_SIZE;
-			run_rx_worker(&context);
+			// Main thread already owns a temp allocator; call the impl directly.
+			run_rx_worker_impl(&context);
 			result.rx_received += context.rx_received;
 			result.rx_bytes += context.rx_bytes;
 			rx_workers.push(make_rx_worker_result(&context));
