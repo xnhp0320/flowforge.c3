@@ -32,5 +32,4 @@ fn String token_type_name(TokenType t) {
 		case TokenType.COLON: return "':'";
 		case TokenType.END_OF_FILE: return "end of file";
 	}
-	return "unknown token";
 }

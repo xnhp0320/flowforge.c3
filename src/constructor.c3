@@ -379,11 +379,12 @@ fn BuildResult build(Registry* registry, Packet packet) {
 		foreach (option : header_spec.options) {
 			Attribute? attr = attrs.get(option.name);
 			if (catch attr) {
-				if (option.has_default) {
+				ConstructorValue? def = option.default_value.get();
+				if (try def) {
 					option_list.push({
 						.name = option.name,
 						.value_kind = AttrValueKind.SCALAR,
-						.scalar_value = option.default_value,
+						.scalar_value = def,
 						.explicitly_set = false,
 					});
 				}

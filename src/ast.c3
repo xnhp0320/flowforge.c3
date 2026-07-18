@@ -1,9 +1,11 @@
 module flowforge::ast;
+import std::collections::maybe;
+
+alias MaybeExpression = Maybe{Expression};
 
 struct Attribute {
 	String name;
-	bool has_value;
-	Expression value;
+	MaybeExpression value;
 }
 
 struct Header {
@@ -73,12 +75,12 @@ fn ScalarValue? evaluate(Expression expr) {
 		case ExpressionKind.PACKET:
 			return { .kind = ScalarKind.PACKET, .packet_val = expr.packet_val };
 	}
-	return NO_VALUE~;
 }
 
 fn ScalarValue? attr_scalar(Attribute* attr) {
-	if (!attr.has_value) return NO_VALUE~;
-	return evaluate(attr.value);
+	Expression? expr = attr.value.get();
+	if (catch expr) return NO_VALUE~;
+	return evaluate(expr);
 }
 
 faultdef NO_VALUE;

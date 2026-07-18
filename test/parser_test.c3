@@ -25,7 +25,7 @@ fn void test_parser_single_header_with_attrs() @test {
 
 	Attribute a0 = pkt[0].attributes[0];
 	assert(a0.name == "dst");
-	assert(a0.has_value);
+	assert(a0.value.has_value);
 	ScalarValue? a0_value = ast::attr_scalar(&a0);
 	if (catch a0_value) unreachable();
 	assert(a0_value.kind == ScalarKind.STRING);
@@ -33,7 +33,7 @@ fn void test_parser_single_header_with_attrs() @test {
 
 	Attribute a1 = pkt[0].attributes[1];
 	assert(a1.name == "src");
-	assert(a1.has_value);
+	assert(a1.value.has_value);
 	ScalarValue? a1_value = ast::attr_scalar(&a1);
 	if (catch a1_value) unreachable();
 	assert(a1_value.kind == ScalarKind.STRING);
@@ -118,11 +118,11 @@ fn void test_parser_attribute_name_only() @test {
 	assert(pkt.len == 1);
 	assert(pkt[0].attributes.len == 3);
 	assert(pkt[0].attributes[0].name == "URG");
-	assert(!pkt[0].attributes[0].has_value);
+	assert(!pkt[0].attributes[0].value.has_value);
 	assert(pkt[0].attributes[1].name == "ACK");
-	assert(!pkt[0].attributes[1].has_value);
+	assert(!pkt[0].attributes[1].value.has_value);
 	assert(pkt[0].attributes[2].name == "PSH");
-	assert(!pkt[0].attributes[2].has_value);
+	assert(!pkt[0].attributes[2].value.has_value);
 }
 
 fn void test_parser_empty_parens() @test {
@@ -260,13 +260,13 @@ fn void test_parser_operator_slash() @test {
 		{
 			.protocol = "Ether",
 			.attributes = {
-				{ .name = "dst", .has_value = true, .value = ast::expr_string("ff:ff:ff:ff:ff:ff") }
+				{ .name = "dst", .value = { .value = ast::expr_string("ff:ff:ff:ff:ff:ff"), .has_value = true } }
 			}
 		},
 		{
 			.protocol = "IP",
 			.attributes = {
-				{ .name = "src", .has_value = true, .value = ast::expr_string("192.168.1.1") }
+				{ .name = "src", .value = { .value = ast::expr_string("192.168.1.1"), .has_value = true } }
 			}
 		},
 	};
@@ -280,7 +280,7 @@ fn void test_parser_operator_slash() @test {
 		{
 			.protocol = "TCP",
 			.attributes = {
-				{ .name = "dport", .has_value = true, .value = ast::expr_integer(80) }
+				{ .name = "dport", .value = { .value = ast::expr_integer(80), .has_value = true } }
 			}
 		},
 	};

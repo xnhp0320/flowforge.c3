@@ -36,10 +36,11 @@ fn CheckResult Checker.check(&self, Packet packet) {
 				continue;
 			}
 
-			if (!attr.has_value) continue;
+			Expression? expr = attr.value.get();
+			if (catch expr) continue;
 
 			String? type_name = self.registry.attr_type(header.protocol, attr.name);
-			ScalarValue? value = ast::evaluate(attr.value);
+			ScalarValue? value = ast::evaluate(expr);
 			if (catch value) continue;
 
 			if (catch type_name) {
