@@ -4,6 +4,7 @@ import flowforge::cvalue;
 import flowforge::registry;
 import flowforge::value;
 import std::collections::list;
+import std::collections::maybe;
 
 faultdef SERIALIZE_ERR, NO_MODIFIER, OUT_OF_RANGE, HEADER_NOT_FOUND;
 
@@ -93,32 +94,18 @@ struct IcmpFixup {
 	FixupMode checksum;
 }
 
-enum Layer3Kind {
-	NONE,
-	IPV4,
-	IPV6,
-}
-
-enum Layer4Kind {
-	NONE,
-	UDP,
-	TCP,
-	ICMP,
-}
-
+// A single packet can carry several layer-3/layer-4 headers at once (e.g. a
+// VXLAN packet has an outer IPv4/UDP plus an inner IPv4/TCP). Each fixup is
+// therefore tracked independently — mirroring the `std::optional` fields of the
+// C++ plan — so that, for instance, the outer UDP length is still written even
+// when an inner TCP header is present.
 struct PacketFixupPlan {
 	usz packet_len;
-	Layer3Kind layer3;
-	union {
-		Ipv4Fixup ipv4;
-		Ipv6Fixup ipv6;
-	}
-	Layer4Kind layer4;
-	union {
-		UdpFixup udp;
-		TcpFixup tcp;
-		IcmpFixup icmp;
-	}
+	Maybe{Ipv4Fixup} ipv4;
+	Maybe{Ipv6Fixup} ipv6;
+	Maybe{UdpFixup} udp;
+	Maybe{TcpFixup} tcp;
+	Maybe{IcmpFixup} icmp;
 	PacketOffloadRequest offload;
 }
 
@@ -706,8 +693,7 @@ fn FixupPlanResult plan_packet_fixups(PacketConstructor packet, Registry* regist
 					errors.push(string::tformat("IPv4 packet length %d exceeds 16 bits", ip_len));
 				}
 
-				result.plan.layer3 = Layer3Kind.IPV4;
-				result.plan.ipv4 = { .offset = ip.header.offset, .header_len = ihl_bytes, .checksum = options.ipv4_checksum };
+				result.plan.ipv4.set({ .offset = ip.header.offset, .header_len = ihl_bytes, .checksum = options.ipv4_checksum });
 				if (options.ipv4_checksum == FixupMode.HARDWARE_OFFLOAD) {
 					result.plan.offload.ipv4_checksum = true;
 					result.plan.offload.layer3 = OffloadLayer3.IPV4;
@@ -729,8 +715,7 @@ fn FixupPlanResult plan_packet_fixups(PacketConstructor packet, Registry* regist
 			if (payload_len > 0xffff) {
 				errors.push(string::tformat("IPv6 payload length %d exceeds 16 bits", payload_len));
 			}
-			result.plan.layer3 = Layer3Kind.IPV6;
-			result.plan.ipv6 = { .offset = ipv6.header.offset, .header_len = ipv6_header_len };
+			result.plan.ipv6.set({ .offset = ipv6.header.offset, .header_len = ipv6_header_len });
 		}
 	}
 
@@ -745,20 +730,19 @@ fn FixupPlanResult plan_packet_fixups(PacketConstructor packet, Registry* regist
 				errors.push(string::tformat("UDP length %d exceeds 16 bits", udp_len));
 			}
 
-			result.plan.layer4 = Layer4Kind.UDP;
-			result.plan.udp = { .offset = udp.header.offset, .checksum = options.udp_checksum };
+			result.plan.udp.set({ .offset = udp.header.offset, .checksum = options.udp_checksum });
 			if (options.udp_checksum != FixupMode.DISABLED) {
 				bool has_pseudo_header = false;
-				if (result.plan.layer3 == Layer3Kind.IPV4) {
-					result.plan.offload.l2_len = result.plan.ipv4.offset;
-					result.plan.offload.l3_len = result.plan.ipv4.header_len;
+				if (result.plan.ipv4.has_value) {
+					result.plan.offload.l2_len = result.plan.ipv4.value.offset;
+					result.plan.offload.l3_len = result.plan.ipv4.value.header_len;
 					result.plan.offload.l4_len = 8;
 					result.plan.offload.layer3 = OffloadLayer3.IPV4;
 					has_pseudo_header = true;
 				}
-				else if (result.plan.layer3 == Layer3Kind.IPV6) {
-					result.plan.offload.l2_len = result.plan.ipv6.offset;
-					result.plan.offload.l3_len = result.plan.ipv6.header_len;
+				else if (result.plan.ipv6.has_value) {
+					result.plan.offload.l2_len = result.plan.ipv6.value.offset;
+					result.plan.offload.l3_len = result.plan.ipv6.value.header_len;
 					result.plan.offload.l4_len = 8;
 					result.plan.offload.layer3 = OffloadLayer3.IPV6;
 					has_pseudo_header = true;
@@ -786,20 +770,19 @@ fn FixupPlanResult plan_packet_fixups(PacketConstructor packet, Registry* regist
 				errors.push(string::tformat("invalid TCP header length %d bytes", tcp_header_len));
 			}
 
-			result.plan.layer4 = Layer4Kind.TCP;
-			result.plan.tcp = { .offset = tcp.header.offset, .header_len = tcp_header_len, .checksum = options.tcp_checksum };
+			result.plan.tcp.set({ .offset = tcp.header.offset, .header_len = tcp_header_len, .checksum = options.tcp_checksum });
 			if (options.tcp_checksum != FixupMode.DISABLED) {
 				bool has_pseudo_header = false;
-				if (result.plan.layer3 == Layer3Kind.IPV4) {
-					result.plan.offload.l2_len = result.plan.ipv4.offset;
-					result.plan.offload.l3_len = result.plan.ipv4.header_len;
+				if (result.plan.ipv4.has_value) {
+					result.plan.offload.l2_len = result.plan.ipv4.value.offset;
+					result.plan.offload.l3_len = result.plan.ipv4.value.header_len;
 					result.plan.offload.l4_len = tcp_header_len;
 					result.plan.offload.layer3 = OffloadLayer3.IPV4;
 					has_pseudo_header = true;
 				}
-				else if (result.plan.layer3 == Layer3Kind.IPV6) {
-					result.plan.offload.l2_len = result.plan.ipv6.offset;
-					result.plan.offload.l3_len = result.plan.ipv6.header_len;
+				else if (result.plan.ipv6.has_value) {
+					result.plan.offload.l2_len = result.plan.ipv6.value.offset;
+					result.plan.offload.l3_len = result.plan.ipv6.value.header_len;
 					result.plan.offload.l4_len = tcp_header_len;
 					result.plan.offload.layer3 = OffloadLayer3.IPV6;
 					has_pseudo_header = true;
@@ -825,8 +808,7 @@ fn FixupPlanResult plan_packet_fixups(PacketConstructor packet, Registry* regist
 				errors.push("ICMP hardware checksum offload is not supported");
 			}
 			else {
-				result.plan.layer4 = Layer4Kind.ICMP;
-				result.plan.icmp = { .offset = icmp.header.offset, .checksum = options.icmp_checksum };
+				result.plan.icmp.set({ .offset = icmp.header.offset, .checksum = options.icmp_checksum });
 			}
 		}
 	}
@@ -850,8 +832,8 @@ fn FixupResult apply_fixup_plan(char[] buffer, PacketFixupPlan plan) {
 
 	char[] payload = buffer[:plan.packet_len];
 
-	if (plan.layer3 == Layer3Kind.IPV4) {
-		Ipv4Fixup ipv4 = plan.ipv4;
+	if (plan.ipv4.has_value) {
+		Ipv4Fixup ipv4 = plan.ipv4.value;
 		write_u16(payload, ipv4.offset + 2, (ushort)(plan.packet_len - ipv4.offset));
 		if (ipv4.checksum != FixupMode.DISABLED) {
 			write_u16(payload, ipv4.offset + 10, 0);
@@ -860,14 +842,14 @@ fn FixupResult apply_fixup_plan(char[] buffer, PacketFixupPlan plan) {
 			}
 		}
 	}
-	else if (plan.layer3 == Layer3Kind.IPV6) {
-		Ipv6Fixup ipv6 = plan.ipv6;
+	if (plan.ipv6.has_value) {
+		Ipv6Fixup ipv6 = plan.ipv6.value;
 		usz payload_len = plan.packet_len - ipv6.offset - ipv6.header_len;
 		write_u16(payload, ipv6.offset + 4, (ushort)payload_len);
 	}
 
-	if (plan.layer4 == Layer4Kind.UDP) {
-		UdpFixup udp = plan.udp;
+	if (plan.udp.has_value) {
+		UdpFixup udp = plan.udp.value;
 		usz udp_len = plan.packet_len - udp.offset;
 		write_u16(payload, udp.offset + 4, (ushort)udp_len);
 		if (udp.checksum != FixupMode.DISABLED) {
@@ -875,12 +857,12 @@ fn FixupResult apply_fixup_plan(char[] buffer, PacketFixupPlan plan) {
 
 			uint pseudo_sum = 0;
 			bool has_pseudo_header = false;
-			if (plan.layer3 == Layer3Kind.IPV4) {
-				pseudo_sum = ipv4_pseudo_sum(payload, plan.ipv4.offset, UDP_PROTOCOL, (ushort)udp_len);
+			if (plan.ipv4.has_value) {
+				pseudo_sum = ipv4_pseudo_sum(payload, plan.ipv4.value.offset, UDP_PROTOCOL, (ushort)udp_len);
 				has_pseudo_header = true;
 			}
-			else if (plan.layer3 == Layer3Kind.IPV6) {
-				pseudo_sum = ipv6_pseudo_sum(payload, plan.ipv6.offset, UDP_PROTOCOL, (uint)udp_len);
+			else if (plan.ipv6.has_value) {
+				pseudo_sum = ipv6_pseudo_sum(payload, plan.ipv6.value.offset, UDP_PROTOCOL, (uint)udp_len);
 				has_pseudo_header = true;
 			}
 
@@ -897,19 +879,19 @@ fn FixupResult apply_fixup_plan(char[] buffer, PacketFixupPlan plan) {
 			}
 		}
 	}
-	else if (plan.layer4 == Layer4Kind.TCP && plan.tcp.checksum != FixupMode.DISABLED) {
-		TcpFixup tcp = plan.tcp;
+	if (plan.tcp.has_value && plan.tcp.value.checksum != FixupMode.DISABLED) {
+		TcpFixup tcp = plan.tcp.value;
 		write_u16(payload, tcp.offset + 16, 0);
 		usz tcp_len = plan.packet_len - tcp.offset;
 
 		uint pseudo_sum = 0;
 		bool has_pseudo_header = false;
-		if (plan.layer3 == Layer3Kind.IPV4) {
-			pseudo_sum = ipv4_pseudo_sum(payload, plan.ipv4.offset, TCP_PROTOCOL, (ushort)tcp_len);
+		if (plan.ipv4.has_value) {
+			pseudo_sum = ipv4_pseudo_sum(payload, plan.ipv4.value.offset, TCP_PROTOCOL, (ushort)tcp_len);
 			has_pseudo_header = true;
 		}
-		else if (plan.layer3 == Layer3Kind.IPV6) {
-			pseudo_sum = ipv6_pseudo_sum(payload, plan.ipv6.offset, TCP_PROTOCOL, (uint)tcp_len);
+		else if (plan.ipv6.has_value) {
+			pseudo_sum = ipv6_pseudo_sum(payload, plan.ipv6.value.offset, TCP_PROTOCOL, (uint)tcp_len);
 			has_pseudo_header = true;
 		}
 
@@ -923,10 +905,11 @@ fn FixupResult apply_fixup_plan(char[] buffer, PacketFixupPlan plan) {
 			write_u16(payload, tcp.offset + 16, fold_checksum(pseudo_sum));
 		}
 	}
-	else if (plan.layer4 == Layer4Kind.ICMP && plan.icmp.checksum != FixupMode.DISABLED) {
-		write_u16(payload, plan.icmp.offset + 2, 0);
-		write_u16(payload, plan.icmp.offset + 2,
-			internet_checksum(checksum_sum(payload[plan.icmp.offset : plan.packet_len - plan.icmp.offset])));
+	if (plan.icmp.has_value && plan.icmp.value.checksum != FixupMode.DISABLED) {
+		IcmpFixup icmp = plan.icmp.value;
+		write_u16(payload, icmp.offset + 2, 0);
+		write_u16(payload, icmp.offset + 2,
+			internet_checksum(checksum_sum(payload[icmp.offset : plan.packet_len - icmp.offset])));
 	}
 
 	result.errors = errors.to_tarray();

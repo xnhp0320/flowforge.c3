@@ -381,3 +381,26 @@ fn void test_disabled_checksum_mode_preserves_explicit_checksum_fields() @test {
 	assert(u16_at(buf[..], 24) == 9);
 	assert(u16_at(buf[..], 40) == 10);
 }
+
+// Guards against the single-`layer4` plan regression: a VXLAN packet carries an
+// outer IPv4/UDP plus an inner IPv4/TCP, and the outer UDP length must still be
+// written even though a later (inner) TCP header exists.
+fn void test_fixup_writes_outer_udp_length_alongside_inner_tcp() @test {
+	BuildResult built = build_default(
+		`Ether(dst="ff:ff:ff:ff:ff:ff",src="02:64:74:61:70:00")/IP(src="203.0.113.1",dst="203.0.113.2")/UDP()/VXLAN(vni=42)/Ether(dst="02:00:00:00:00:02",src="02:00:00:00:00:01")/IP(src="10.10.0.1",dst="10.10.0.2")/TCP(sport=2000,dport=2001,flags=2)`);
+	assert(built.ok);
+	char[128] buf;
+	Registry reg = registry::create_default_registry();
+	SerializeResult serialize = serializer::serialize_packet(built.packet, &reg, buf[..]);
+	assert(serialize.ok);
+	assert(serialize.packet_len == 104);
+
+	FixupResult fixup = serializer::fixup_packet(built.packet, &reg, buf[..], serialize.packet_len);
+	assert(fixup.ok);
+
+	// Outer IPv4 total length @16 and outer UDP length @38 are both written.
+	assert(u16_at(buf[..], 16) == 90);
+	assert(u16_at(buf[..], 38) == 70);
+	// Inner TCP checksum @100 is computed (non-zero).
+	assert(u16_at(buf[..], 100) != 0);
+}
