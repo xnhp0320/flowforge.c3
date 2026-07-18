@@ -33,7 +33,7 @@ Lexer → Parser → Checker → Constructor
   packet-valued options, IP/TCP option length fields, `Payload`
   `length`/`total_length`, and inference-rule propagation)
 
-## Phase 3 (in progress)
+## Phase 3
 
 Serializer stage, porting `packet_serializer` from the C++ `packet_editor`:
 
@@ -52,7 +52,27 @@ Lexer → Parser → Checker → Constructor → Serializer
     `SOFTWARE`, `HARDWARE_OFFLOAD`, or `DISABLED` per protocol; hardware
     offload mode records a `PacketOffloadRequest` (layer lengths + which
     checksums to offload) instead of computing the checksum in software.
-- The pcap writer and DPDK runtime are not implemented yet.
+
+## Phase 4 (in progress)
+
+File mode — DPDK-free packet generation and pcap output, porting
+`packet_generator` and `pcap_writer` from the C++ `packet_editor`:
+
+```
+Lexer → Parser → Checker → Constructor → Serializer → Generator → Pcap
+```
+
+- `src/generator.c3` — `PacketGenerator.prepare()` runs
+  check → construct → serialize → fixup once to build a `GeneratedPacket`
+  (base payload, range modifiers, fixup plan) and plans the total flow
+  count from the range fields (capped by an optional packet count).
+  `payload_for_flow()` / `apply_flow()` then patch a specific flow index
+  into a payload buffer (indexing each range modifier and re-running the
+  fixup plan), so millions of flows expand without re-serializing.
+- `src/pcap.c3` — `PcapWriter` appends a classic little-endian pcap
+  header and per-packet records (Ethernet link type) to a byte buffer.
+- Unit tests mirror the C++ `test_file_mode` suite (**5** cases).
+- The DPDK runtime is not implemented yet.
 
 ## Build
 
@@ -75,8 +95,8 @@ c3c run -- examples/tap_runtime.packet
 ## Layout
 
 - `src/` — lexer, parser, AST, registry, validators, checker, value/constructor
-  types, serializer, CLI
+  types, serializer, generator, pcap writer, CLI
 - `test/` — unit tests
 - `examples/` — sample packet programs (copied from packet_editor)
 
-Later phases: pcap writer, DPDK runtime.
+Later phases: DPDK runtime.
