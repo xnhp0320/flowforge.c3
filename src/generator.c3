@@ -21,7 +21,6 @@ struct FlowIndexPlan {
 }
 
 struct GeneratedPacket {
-	PacketConstructor constructor;
 	char[] base_payload;
 	PayloadFieldModifier[] modifiers;
 	PacketFixupPlan fixup_plan;
@@ -150,7 +149,6 @@ fn bool PacketGenerator.serialize_generated(&self, PacketConstructor packet, Fix
 	mem::copy(base_payload.ptr, &scratch[0], (sz)serialized.packet_len);
 
 	*out = {
-		.constructor = packet,
 		.base_payload = base_payload,
 		.modifiers = copy_modifiers(serialized.modifiers, alloc),
 		.fixup_plan = plan.plan,

@@ -2,14 +2,13 @@ module flowforge;
 import flowforge::ast;
 import flowforge::parser;
 import flowforge::checker;
+import flowforge::file_program;
 import flowforge::generator;
 import flowforge::pcap;
 import flowforge::registry;
 import std::collections::list;
 import std::io;
 import std::io::file;
-
-faultdef NO_PACKET;
 
 fn int usage(String prog) {
 	io::eprintfn("Usage: %s [--parse-only] <program.packet>", prog);
@@ -71,32 +70,6 @@ fn int run_program(String input, bool parse_only) {
 		ok = ok && result.ok;
 	}
 	return ok ? 0 : 1;
-}
-
-<* Finds the `PACKET:` variable in a program and evaluates it to a packet. *>
-fn Packet? program_packet(Program program) {
-	foreach (variable : program.variables) {
-		if (variable.name != "PACKET") continue;
-		ScalarValue? value = ast::evaluate(variable.expression);
-		if (catch value) return NO_PACKET~;
-		if (value.kind != ScalarKind.PACKET) return NO_PACKET~;
-		return value.packet_val;
-	}
-	return NO_PACKET~;
-}
-
-<* Reads the optional `PACKET_COUNT:` variable from a program. *>
-fn generator::MaybeCount program_packet_count(Program program) {
-	generator::MaybeCount count;
-	foreach (variable : program.variables) {
-		if (variable.name != "PACKET_COUNT") continue;
-		ScalarValue? value = ast::evaluate(variable.expression);
-		if (catch value) continue;
-		if (value.kind == ScalarKind.INTEGER && value.int_val > 0) {
-			count.set((ulong)value.int_val);
-		}
-	}
-	return count;
 }
 
 <* Expands the packet's flows and streams them to `output_path` as a pcap. *>
@@ -173,13 +146,11 @@ fn int file_mode_file(String content, generator::MaybeCount cli_count, String ou
 			io::eprintfn("parse error: %s", p.last_error_msg());
 			return 1;
 		}
-		Packet? packet = program_packet(program);
-		if (catch packet) {
-			io::eprintfn("program has no packet-valued PACKET variable");
-			return 1;
-		}
-		generator::MaybeCount count = cli_count.has_value ? cli_count : program_packet_count(program);
-		return run_file_mode(packet, count, output_path);
+		FileProgram parsed = file_program::parse(program, cli_count);
+		foreach (w : parsed.warnings) io::eprintfn("WARNING: %s", w);
+		foreach (e : parsed.errors) io::eprintfn("ERROR: %s", e);
+		if (!parsed.ok) return 1;
+		return run_file_mode(parsed.packet, parsed.packet_count, output_path);
 	}
 
 	Packet? packet = p.parse_packet();
@@ -259,7 +230,7 @@ fn int main(String[] args) {
 		return 1;
 	}
 	String content = (String)bytes;
-	if (content.contains("PACKET:") && content.contains_char(':')) {
+	if (content.contains("PACKET:")) {
 		return run_program(content, parse_only);
 	}
 	return run_check(content, parse_only);
