@@ -75,17 +75,76 @@ Lexer → Parser → Checker → Constructor → Serializer → Generator → Pc
   expands a program/expression into flows and writes them to a pcap
   (`-c <count>` caps the expansion).
 - Unit tests mirror the C++ `test_file_mode` suite (**5** cases).
-- The DPDK runtime is not implemented yet.
+
+## Phase 5
+
+Live DPDK runtime, porting `packet::Runtime` from the C++ `packet_editor`:
+
+```
+Lexer → Parser → Checker → Constructor → Serializer → Generator → DPDK EAL → TX/RX
+```
+
+- `src/runtime.c3` — the DPDK-free **check** path (`Runtime.check`,
+  `build_config`, `split_dpdk_args`, flow/clone/worker transmission counting).
+  This stays free of any DPDK call so the 26 check-only tests run without an EAL.
+- `csrc/dpdk_shim.c` / `csrc/dpdk_shim.h` — a small C shim that is the *only*
+  translation unit including DPDK headers. It exposes the macros, thread-local
+  variables and `static inline` helpers (mbuf field access, `RTE_MBUF_F_TX_*`
+  flags, `rte_pktmbuf_*`, `rte_eth_tx/rx_burst`, lcore enumeration, the checksum
+  offload request, and a Linux `/dev/net/tun` TAP preflight) behind plain
+  C-ABI `ff_*` functions.
+- `src/dpdk.c3` (`flowforge::dpdk`) — thin `extern fn` bindings: the exported
+  `rte_*` symbols are bound directly, everything else via the `ff_*` shim.
+- `src/runtime_live.c3` — the EAL-backed pipeline mirroring `Runtime::run`:
+  TAP preflight → `rte_eal_init` → mbuf pool seeded from the generated base
+  payload → TAP vdev probe (`net_tap0`, `iface=packet_tap0`) → port
+  configure/start → `run_traffic` with TX/RX workers on worker lcores. When
+  `DPDK_ARGS` provides no worker lcore (e.g. `-l 0`) the single TX worker runs
+  on the **main lcore** so single-core setups still transmit. Hardware checksum
+  offload is applied per mbuf via `apply_dpdk_offload`. A `--capture` path
+  (Slice D) receives on the TAP port and optionally writes a pcap via the
+  existing `PcapWriter`.
+- DPDK lives at **`/opt/dpdk`** (`include/`, `lib/x86_64-linux-gnu/`,
+  `PKG_CONFIG_PATH=/opt/dpdk/lib/x86_64-linux-gnu/pkgconfig`). `project.json`
+  wires the C shim (`c-sources`, `c-include-dirs`, `cflags` with
+  `-include rte_config.h`), the DPDK shared libraries + TAP/vdev/mempool_ring
+  drivers, and `-Wl,-rpath,/opt/dpdk/lib/x86_64-linux-gnu`.
+- A unit test (`test/runtime_dpdk_test.c3`) links DPDK and checks
+  `apply_dpdk_offload` mbuf metadata (mirrors
+  `RuntimeTest.AppliesDpdkOffloadRequestToMbufMetadata`).
+- **e2e transmit/capture needs root and TAP access** (`CAP_NET_ADMIN`,
+  `/dev/net/tun`); the check path and the offload test run without privileges.
 
 ## Build
 
-Requires [c3c](https://github.com/c3lang/c3c) 0.8+.
+Requires [c3c](https://github.com/c3lang/c3c) 0.8+ and DPDK at `/opt/dpdk`.
 
 ```bash
+export PKG_CONFIG_PATH=/opt/dpdk/lib/x86_64-linux-gnu/pkgconfig
 c3c build
 c3c test
-c3c run -- examples/tap_runtime.packet
+c3c run -- --check examples/tap_runtime.packet
 ```
+
+### Live mode (needs root)
+
+```bash
+# Validate a runtime program without touching the EAL:
+./build/ffg --check examples/tap_runtime.packet
+
+# Transmit one full pass over the flows on the TAP port:
+sudo ./build/ffg examples/tap_runtime.packet --once
+
+# Transmit continuously, cloning each flow 4x, with a live stats view:
+sudo ./build/ffg examples/tap_runtime.packet --clone 4 --stats-interval 2
+
+# Capture from the TAP port to a pcap (Ctrl-C to stop):
+sudo ./build/ffg examples/tap_runtime.packet --capture out.pcap
+```
+
+Live flags: `--clone <n>`, `--split`, `--once`, `--stats-interval <sec>`,
+`--capture [<out.pcap>]`. A program is treated as a live runtime program when it
+declares a `DPDK_ARGS` variable; `--check` forces the DPDK-free check instead.
 
 ## CLI
 
@@ -116,8 +175,7 @@ with `-c`. Duplicate variable names are rejected.
 ## Layout
 
 - `src/` — lexer, parser, AST, registry, validators, checker, value/constructor
-  types, serializer, generator, pcap writer, CLI
+  types, serializer, generator, pcap writer, DPDK bindings + live runtime, CLI
+- `csrc/` — C shim wrapping the DPDK macros / inline helpers the C3 side needs
 - `test/` — unit tests
 - `examples/` — sample packet programs (copied from packet_editor)
-
-Later phases: DPDK runtime.
