@@ -101,7 +101,7 @@ Expands range fields into flows and writes the packets to a pcap file
 (checksums/lengths are fixed up per flow):
 
 ```bash
-# From a program file (uses its PACKET_COUNT: unless -c overrides it)
+# From a program file (uses its PACKET_COUNT: when present)
 ./build/ffg -w out.pcap examples/tap_runtime.packet
 
 # From an inline expression, capping the range expansion at 12 flows
@@ -110,6 +110,8 @@ Expands range fields into flows and writes the packets to a pcap file
 
 `-w`/`--write <file>` selects file mode; `-c`/`--count <n>` caps the number
 of generated packets (defaults to the full cartesian product of all ranges).
+`PACKET_COUNT:` in a program must be a positive integer; it cannot be combined
+with `-c`. Duplicate variable names are rejected.
 
 ## Layout
 

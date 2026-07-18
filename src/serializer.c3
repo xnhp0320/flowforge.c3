@@ -572,7 +572,7 @@ fn SerializeResult serialize_packet(PacketConstructor packet, Registry* registry
 		return result;
 	}
 
-	for (usz i = 0; i < result.packet_len; i++) output[i] = 0;
+	mem::clear(output.ptr, (sz)result.packet_len);
 
 	foreach (header : packet) {
 		HeaderSpec*? header_spec = registry.find_header(header.protocol);
