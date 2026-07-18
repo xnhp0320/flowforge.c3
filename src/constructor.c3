@@ -171,6 +171,7 @@ fn OptionConstructor* find_option(HeaderConstructor* header, String name) {
 	return null;
 }
 
+<* @param [&in] registry : `read-only protocol definitions` *>
 fn usz packet_bit_width(PacketConstructor packet, Registry* registry) {
 	usz bit_width = 0;
 	foreach (header : packet) {
@@ -183,6 +184,7 @@ fn usz packet_bit_width(PacketConstructor packet, Registry* registry) {
 	return bit_width;
 }
 
+<* @param [&in] registry : `read-only protocol definitions` *>
 fn usz packet_option_bit_width(OptionConstructor* option, Registry* registry) {
 	if (option.value_kind != AttrValueKind.PACKET) return 0;
 	usz bit_width = packet_bit_width(option.packet_value, registry);
@@ -198,6 +200,7 @@ fn ulong? integer_option_value(HeaderConstructor* header, OptionConstructor* opt
 	return BUILD_ERR~;
 }
 
+<* @param [&in] registry : `read-only protocol definitions` *>
 fn usz header_option_bit_width(HeaderConstructor* header, Registry* registry, List{String}* errors) {
 	OptionConstructor* option = null;
 	foreach (&o : header.options) {
@@ -287,6 +290,7 @@ fn usz payload_bit_width(HeaderConstructor* header, usz packet_bit_offset, List{
 	return (usz)length_bytes * 8;
 }
 
+<* @param [&in] registry : `read-only protocol definitions` *>
 fn void apply_inference_rules(List{HeaderConstructor}* constructor, Registry* registry,
 	List{String}* warnings, List{String}* errors) {
 	usz n = (usz)constructor.len();
@@ -318,6 +322,7 @@ fn void apply_inference_rules(List{HeaderConstructor}* constructor, Registry* re
 	}
 }
 
+<* @param [&in] registry : `read-only protocol definitions` *>
 fn BuildResult build(Registry* registry, Packet packet) {
 	List{String} warnings;
 	warnings.tinit();

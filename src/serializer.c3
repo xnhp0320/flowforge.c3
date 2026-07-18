@@ -348,6 +348,7 @@ fn usz payload_bit_width(HeaderConstructor header) {
 	return (usz)(length_bytes * 8);
 }
 
+<* @param [&in] registry : `read-only protocol definitions` *>
 fn usz packet_bit_width(PacketConstructor packet, Registry* registry) {
 	usz bit_width = 0;
 	foreach (header : packet) {
@@ -360,12 +361,14 @@ fn usz packet_bit_width(PacketConstructor packet, Registry* registry) {
 	return bit_width;
 }
 
+<* @param [&in] registry : `read-only protocol definitions` *>
 fn usz packet_option_bit_width(OptionConstructor option, Registry* registry) {
 	if (option.value_kind != AttrValueKind.PACKET) return 0;
 	usz bit_width = packet_bit_width(option.packet_value, registry);
 	return ((bit_width + 31) / 32) * 32;
 }
 
+<* @param [&in] registry : `read-only protocol definitions` *>
 fn usz header_option_bit_width(HeaderConstructor header, Registry* registry) {
 	if (header.protocol != "IP" && header.protocol != "TCP") return 0;
 	OptionConstructor* options = constructor::find_option(&header, "options");
@@ -521,6 +524,7 @@ fn PayloadFieldModifier? make_modifier(HeaderConstructor header, FieldSpec* spec
 	}
 }
 
+<* @param [&in] registry : `read-only protocol definitions` *>
 fn void serialize_option_packet(HeaderConstructor parent, OptionConstructor option, Registry* registry, usz start_bit_offset, char[] payload, List{String}* errors) {
 	if (parent.protocol != "IP" && parent.protocol != "TCP") {
 		errors.push(string::tformat("packet-valued option '%s.%s' is not serializable", parent.protocol, option.name));
@@ -546,6 +550,7 @@ fn void serialize_option_packet(HeaderConstructor parent, OptionConstructor opti
 	}
 }
 
+<* @param [&in] registry : `read-only protocol definitions` *>
 fn SerializeResult serialize_packet(PacketConstructor packet, Registry* registry, char[] output) {
 	SerializeResult result;
 	List{String} errors;
@@ -658,6 +663,7 @@ struct HeaderRef {
 	HeaderSpec* spec;
 }
 
+<* @param [&in] registry : `read-only protocol definitions` *>
 fn HeaderRef? find_header_ref(PacketConstructor packet, Registry* registry, String protocol) {
 	foreach (&h : packet) {
 		if (h.protocol == protocol) {
@@ -669,6 +675,7 @@ fn HeaderRef? find_header_ref(PacketConstructor packet, Registry* registry, Stri
 	return HEADER_NOT_FOUND~;
 }
 
+<* @param [&in] registry : `read-only protocol definitions` *>
 fn FixupPlanResult plan_packet_fixups(PacketConstructor packet, Registry* registry, char[] buffer, usz packet_len, FixupOptions options = {}) {
 	FixupPlanResult result;
 	result.plan.packet_len = packet_len;
@@ -927,6 +934,7 @@ fn FixupResult apply_fixup_plan(char[] buffer, PacketFixupPlan plan) {
 	return result;
 }
 
+<* @param [&in] registry : `read-only protocol definitions` *>
 fn FixupResult fixup_packet(PacketConstructor packet, Registry* registry, char[] buffer, usz packet_len, FixupOptions options = {}) {
 	FixupPlanResult plan = plan_packet_fixups(packet, registry, buffer, packet_len, options);
 	if (!plan.ok) {

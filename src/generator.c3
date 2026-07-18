@@ -4,8 +4,11 @@ import flowforge::checker;
 import flowforge::constructor;
 import flowforge::registry;
 import flowforge::serializer;
+import flowforge::value;
 import std::collections::list;
 import std::collections::maybe;
+
+faultdef GENERATE_ERR;
 
 alias MaybeCount = Maybe{ulong};
 
@@ -24,6 +27,7 @@ struct GeneratedPacket {
 	PacketFixupPlan fixup_plan;
 	usz packet_len;
 	FlowIndexPlan flow_plan;
+	Allocator allocator;
 }
 
 struct PacketGenerationResult {
@@ -38,15 +42,18 @@ struct PacketGenerator {
 	Registry* registry;
 }
 
-<* Runs check → construct → serialize → fixup and plans range expansion. *>
-fn PacketGenerationResult PacketGenerator.prepare(&self, Packet packet, MaybeCount packet_count = {}, FixupOptions fixup_options = {}) {
+<* Runs check → construct → serialize → fixup and plans range expansion.
+   The persistent parts of the returned GeneratedPacket (base payload and
+   modifiers) are allocated from `alloc`; call GeneratedPacket.free() to
+   release them when `alloc` is a heap allocator. *>
+fn PacketGenerationResult PacketGenerator.prepare(&self, Packet packet, MaybeCount packet_count = {}, FixupOptions fixup_options = {}, Allocator alloc = tmem) {
 	PacketGenerationResult result;
 	List{String} warnings;
 	warnings.tinit();
 	List{String} errors;
 	errors.tinit();
 
-	Checker checker = { .registry = *self.registry };
+	Checker checker = { .registry = self.registry };
 	CheckResult check = checker.check(packet);
 	foreach (w : check.warnings) warnings.push(w);
 	foreach (e : check.errors) errors.push(e);
@@ -66,7 +73,7 @@ fn PacketGenerationResult PacketGenerator.prepare(&self, Packet packet, MaybeCou
 	}
 
 	GeneratedPacket generated;
-	if (!self.serialize_generated(built.packet, fixup_options, &generated, &errors)) {
+	if (!self.serialize_generated(built.packet, fixup_options, &generated, &errors, alloc)) {
 		result.warnings = warnings.to_tarray();
 		result.errors = errors.to_tarray();
 		return result;
@@ -88,15 +95,19 @@ fn PacketGenerationResult PacketGenerator.prepare(&self, Packet packet, MaybeCou
 	return result;
 }
 
-<* Fills `payload` with the base packet then patches in the given flow. *>
-fn bool PacketGenerator.payload_for_flow(&self, GeneratedPacket* packet, ulong flow_index, List{char}* payload, List{String}* errors) {
+<* Returns a freshly allocated payload (owned by `alloc`) for the given flow. *>
+fn char[]? PacketGenerator.payload_for_flow(&self, GeneratedPacket* packet, ulong flow_index, Allocator alloc, List{String}* errors) {
 	if (packet.base_payload.len != packet.packet_len) {
 		errors.push("base payload length does not match packet length");
-		return false;
+		return GENERATE_ERR~;
 	}
-	payload.clear();
-	foreach (b : packet.base_payload) payload.push(b);
-	return self.apply_flow(packet, flow_index, payload.array_view(), errors);
+	char[] payload = alloc::new_array(alloc, char, (sz)packet.packet_len);
+	mem::copy(payload.ptr, packet.base_payload.ptr, (sz)packet.packet_len);
+	if (!self.apply_flow(packet, flow_index, payload, errors)) {
+		alloc::free(alloc, payload.ptr);
+		return GENERATE_ERR~;
+	}
+	return payload;
 }
 
 <* Patches an already-populated buffer to represent a specific flow. *>
@@ -120,33 +131,98 @@ fn bool PacketGenerator.apply_flow(&self, GeneratedPacket* packet, ulong flow_in
 	return fixed.ok;
 }
 
-fn bool PacketGenerator.serialize_generated(&self, PacketConstructor packet, FixupOptions fixup_options, GeneratedPacket* out, List{String}* errors) {
-	List{char} scratch;
-	scratch.tinit();
-	for (usz i = 0; i < GENERATOR_MAX_PACKET_SIZE; i++) scratch.push(0);
-	char[] payload = scratch.array_view();
+fn bool PacketGenerator.serialize_generated(&self, PacketConstructor packet, FixupOptions fixup_options, GeneratedPacket* out, List{String}* errors, Allocator alloc) {
+	char[GENERATOR_MAX_PACKET_SIZE] scratch;
 
-	SerializeResult serialized = serializer::serialize_packet(packet, self.registry, payload);
+	SerializeResult serialized = serializer::serialize_packet(packet, self.registry, scratch[..]);
 	foreach (e : serialized.errors) errors.push(e);
 	if (!serialized.ok) return false;
 
-	FixupPlanResult plan = serializer::plan_packet_fixups(packet, self.registry, payload, serialized.packet_len, fixup_options);
+	FixupPlanResult plan = serializer::plan_packet_fixups(packet, self.registry, scratch[..], serialized.packet_len, fixup_options);
 	foreach (e : plan.errors) errors.push(e);
 	if (!plan.ok) return false;
 
-	FixupResult fixed = serializer::apply_fixup_plan(payload, plan.plan);
+	FixupResult fixed = serializer::apply_fixup_plan(scratch[..], plan.plan);
 	foreach (e : fixed.errors) errors.push(e);
 	if (!fixed.ok) return false;
 
+	char[] base_payload = alloc::new_array(alloc, char, (sz)serialized.packet_len);
+	mem::copy(base_payload.ptr, &scratch[0], (sz)serialized.packet_len);
+
 	*out = {
 		.constructor = packet,
-		.base_payload = payload[:serialized.packet_len],
-		.modifiers = serialized.modifiers,
+		.base_payload = base_payload,
+		.modifiers = copy_modifiers(serialized.modifiers, alloc),
 		.fixup_plan = plan.plan,
 		.packet_len = serialized.packet_len,
 		.flow_plan = {},
+		.allocator = alloc,
 	};
 	return true;
+}
+
+<* Deep-copies the serializer's (temp-allocated) modifiers into `alloc` so the
+   GeneratedPacket owns them independently of the temp arena. *>
+fn PayloadFieldModifier[] copy_modifiers(PayloadFieldModifier[] src, Allocator alloc) {
+	if (src.len == 0) return {};
+	PayloadFieldModifier[] dst = alloc::new_array(alloc, PayloadFieldModifier, (sz)src.len);
+	for (usz i = 0; i < src.len; i++) {
+		PayloadFieldModifier m = src[i];
+		m.protocol = m.protocol.copy(alloc);
+		m.field = m.field.copy(alloc);
+		switch (m.values_kind) {
+			case ModifierValueKind.UINT_RANGES:
+				m.uint_ranges = dup_uint_ranges(m.uint_ranges, alloc);
+			case ModifierValueKind.IPV4_RANGES:
+				m.ipv4_ranges = dup_ipv4_ranges(m.ipv4_ranges, alloc);
+			case ModifierValueKind.IPV6_RANGES:
+				m.ipv6_ranges = dup_ipv6_ranges(m.ipv6_ranges, alloc);
+		}
+		dst[i] = m;
+	}
+	return dst;
+}
+
+fn UIntRange[] dup_uint_ranges(UIntRange[] src, Allocator alloc) {
+	if (src.len == 0) return {};
+	UIntRange[] dst = alloc::new_array(alloc, UIntRange, (sz)src.len);
+	foreach (i, r : src) dst[i] = r;
+	return dst;
+}
+
+fn IPv4Range[] dup_ipv4_ranges(IPv4Range[] src, Allocator alloc) {
+	if (src.len == 0) return {};
+	IPv4Range[] dst = alloc::new_array(alloc, IPv4Range, (sz)src.len);
+	foreach (i, r : src) dst[i] = r;
+	return dst;
+}
+
+fn IPv6Range[] dup_ipv6_ranges(IPv6Range[] src, Allocator alloc) {
+	if (src.len == 0) return {};
+	IPv6Range[] dst = alloc::new_array(alloc, IPv6Range, (sz)src.len);
+	foreach (i, r : src) dst[i] = r;
+	return dst;
+}
+
+<* Releases the base payload and modifiers. Only call this when prepare() was
+   given a heap allocator; for the default temp allocator it is unnecessary. *>
+fn void GeneratedPacket.free(&self) {
+	if (!self.allocator) return;
+	foreach (&m : self.modifiers) {
+		switch (m.values_kind) {
+			case ModifierValueKind.UINT_RANGES:
+				if (m.uint_ranges.len) alloc::free(self.allocator, m.uint_ranges.ptr);
+			case ModifierValueKind.IPV4_RANGES:
+				if (m.ipv4_ranges.len) alloc::free(self.allocator, m.ipv4_ranges.ptr);
+			case ModifierValueKind.IPV6_RANGES:
+				if (m.ipv6_ranges.len) alloc::free(self.allocator, m.ipv6_ranges.ptr);
+		}
+		if (m.protocol.len) alloc::free(self.allocator, m.protocol.ptr);
+		if (m.field.len) alloc::free(self.allocator, m.field.ptr);
+	}
+	if (self.modifiers.len) alloc::free(self.allocator, self.modifiers.ptr);
+	if (self.base_payload.len) alloc::free(self.allocator, self.base_payload.ptr);
+	*self = {};
 }
 
 fn bool plan_flow_indexes(PayloadFieldModifier[] modifiers, MaybeCount packet_count, FlowIndexPlan* out, List{String}* errors) {

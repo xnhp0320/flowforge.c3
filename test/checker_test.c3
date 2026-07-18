@@ -105,7 +105,7 @@ fn void test_checker_custom_header_registration() @test {
 		{ "field1", "field2", "field3" },
 		{ "b64", "b64", "b64" },
 		{});
-	Checker checker = { .registry = reg };
+	Checker checker = { .registry = &reg };
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
 	assert(result.errors.len == 0);
@@ -119,7 +119,7 @@ fn void test_checker_custom_header_unknown_attr() @test {
 		{ "field1", "field2" },
 		{ "b64", "b64" },
 		{});
-	Checker checker = { .registry = reg };
+	Checker checker = { .registry = &reg };
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
 	assert(result.warnings.len == 1);
@@ -273,7 +273,7 @@ fn void test_checker_custom_type_registration() @test {
 	Registry reg = registry::create_default_registry();
 	reg.add_failing_type("always_fails", "always fails");
 	reg.add_header("MyProto", { "addr" }, { "always_fails" }, {});
-	Checker checker = { .registry = reg };
+	Checker checker = { .registry = &reg };
 	CheckResult result = checker.check(pkt);
 	assert(!result.ok);
 	assert(result.errors.len == 1);
@@ -325,7 +325,7 @@ fn void test_checker_bit_field_b64() @test {
 	Packet pkt = testutil::must_parse("MyHdr(field=9223372036854775807)");
 	Registry reg = registry::create_default_registry();
 	reg.add_header("MyHdr", { "field" }, { "b64" }, {});
-	Checker checker = { .registry = reg };
+	Checker checker = { .registry = &reg };
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
 	assert(result.errors.len == 0);
@@ -382,7 +382,7 @@ fn void test_checker_bit_range_list_accepts_scalar_integer() @test {
 	Packet pkt = testutil::must_parse("MyHdr(field=65535)");
 	Registry reg = registry::create_default_registry();
 	reg.add_header("MyHdr", { "field" }, { "b16_ranges" }, {});
-	Checker checker = { .registry = reg };
+	Checker checker = { .registry = &reg };
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
 	assert(result.errors.len == 0);
@@ -392,7 +392,7 @@ fn void test_checker_bit_range_list_accepts_scalar_string() @test {
 	Packet pkt = testutil::must_parse("MyHdr(field=\"65535\")");
 	Registry reg = registry::create_default_registry();
 	reg.add_header("MyHdr", { "field" }, { "b16_ranges" }, {});
-	Checker checker = { .registry = reg };
+	Checker checker = { .registry = &reg };
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
 	assert(result.errors.len == 0);
@@ -405,7 +405,7 @@ fn void test_checker_bit_range_list_accepts_range_and_list() @test {
 		{ "a", "b", "c" },
 		{ "b16_ranges", "b16_ranges", "b16_ranges" },
 		{});
-	Checker checker = { .registry = reg };
+	Checker checker = { .registry = &reg };
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
 	assert(result.errors.len == 0);
@@ -418,7 +418,7 @@ fn void test_checker_bit_range_list_accepts_hex_and_binary() @test {
 		{ "a", "b", "c" },
 		{ "b16_ranges", "b16_ranges", "b16_ranges" },
 		{});
-	Checker checker = { .registry = reg };
+	Checker checker = { .registry = &reg };
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
 	assert(result.errors.len == 0);
@@ -428,7 +428,7 @@ fn void test_checker_bit_range_list_rejects_out_of_width_value() @test {
 	Packet pkt = testutil::must_parse("MyHdr(field=\"65536\")");
 	Registry reg = registry::create_default_registry();
 	reg.add_header("MyHdr", { "field" }, { "b16_ranges" }, {});
-	Checker checker = { .registry = reg };
+	Checker checker = { .registry = &reg };
 	CheckResult result = checker.check(pkt);
 	assert(!result.ok);
 	assert(result.errors.len == 1);
@@ -439,7 +439,7 @@ fn void test_checker_bit_range_list_rejects_negative_value() @test {
 	Packet pkt = testutil::must_parse("MyHdr(field=-1)");
 	Registry reg = registry::create_default_registry();
 	reg.add_header("MyHdr", { "field" }, { "b16_ranges" }, {});
-	Checker checker = { .registry = reg };
+	Checker checker = { .registry = &reg };
 	CheckResult result = checker.check(pkt);
 	assert(!result.ok);
 	assert(result.errors.len == 1);
@@ -449,7 +449,7 @@ fn void test_checker_bit_range_list_rejects_reversed_range() @test {
 	Packet pkt = testutil::must_parse("MyHdr(field=\"2-1\")");
 	Registry reg = registry::create_default_registry();
 	reg.add_header("MyHdr", { "field" }, { "b16_ranges" }, {});
-	Checker checker = { .registry = reg };
+	Checker checker = { .registry = &reg };
 	CheckResult result = checker.check(pkt);
 	assert(!result.ok);
 	assert(result.errors.len == 1);
@@ -462,7 +462,7 @@ fn void test_checker_bit_range_list_rejects_malformed_lists() @test {
 		{ "empty", "trailing" },
 		{ "b16_ranges", "b16_ranges" },
 		{});
-	Checker checker = { .registry = reg };
+	Checker checker = { .registry = &reg };
 	Packet pkt = testutil::must_parse("MyHdr(empty=\"[]\",trailing=\"[1,]\")");
 	CheckResult result = checker.check(pkt);
 	assert(!result.ok);

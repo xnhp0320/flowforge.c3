@@ -4,6 +4,7 @@ import flowforge::pcap;
 import flowforge::registry;
 import flowforge::testutil;
 import std::collections::list;
+import std::io;
 
 fn char byte_at(char[] bytes, usz offset) => bytes[offset];
 
@@ -45,17 +46,15 @@ fn void test_generator_produces_per_flow_payloads() @test {
 	assert(result.ok);
 	assert(result.has_packet);
 
-	List{char} payload;
-	payload.tinit();
 	List{String} errors;
 	errors.tinit();
 
-	assert(gen.payload_for_flow(&result.packet, 2, &payload, &errors));
+	char[]? payload = gen.payload_for_flow(&result.packet, 2, tmem, &errors);
+	if (catch payload) unreachable();
 
-	char[] bytes = payload.array_view();
-	assert(bytes.len == 20);
-	assert(bytes[12] == 10);
-	assert(bytes[15] == 3);
+	assert(payload.len == 20);
+	assert(payload[12] == 10);
+	assert(payload[15] == 3);
 }
 
 fn void test_generator_applies_flow_into_prefilled_buffer_repeatedly() @test {
@@ -71,35 +70,31 @@ fn void test_generator_applies_flow_into_prefilled_buffer_repeatedly() @test {
 	List{String} errors;
 	errors.tinit();
 
-	List{char} first_expected;
-	first_expected.tinit();
-	List{char} last_expected;
-	last_expected.tinit();
-
-	assert(gen.payload_for_flow(&result.packet, 0, &first_expected, &errors));
+	char[]? first_expected = gen.payload_for_flow(&result.packet, 0, tmem, &errors);
+	if (catch first_expected) unreachable();
 	assert(errors.len() == 0);
-	assert(gen.payload_for_flow(&result.packet, 3, &last_expected, &errors));
+	char[]? last_expected = gen.payload_for_flow(&result.packet, 3, tmem, &errors);
+	if (catch last_expected) unreachable();
 	assert(errors.len() == 0);
 
-	List{char} reusable;
-	reusable.tinit();
-	foreach (b : result.packet.base_payload) reusable.push(b);
+	char[] reusable = alloc::new_array(tmem, char, (sz)result.packet.packet_len);
+	mem::copy(reusable.ptr, result.packet.base_payload.ptr, (sz)result.packet.packet_len);
 
-	assert(gen.apply_flow(&result.packet, 0, reusable.array_view(), &errors));
+	assert(gen.apply_flow(&result.packet, 0, reusable, &errors));
 	assert(errors.len() == 0);
-	assert(bytes_equal(reusable.array_view(), first_expected.array_view()));
+	assert(bytes_equal(reusable, first_expected));
 
-	assert(gen.apply_flow(&result.packet, 3, reusable.array_view(), &errors));
+	assert(gen.apply_flow(&result.packet, 3, reusable, &errors));
 	assert(errors.len() == 0);
-	assert(bytes_equal(reusable.array_view(), last_expected.array_view()));
+	assert(bytes_equal(reusable, last_expected));
 
-	assert(gen.apply_flow(&result.packet, 0, reusable.array_view(), &errors));
+	assert(gen.apply_flow(&result.packet, 0, reusable, &errors));
 	assert(errors.len() == 0);
-	assert(bytes_equal(reusable.array_view(), first_expected.array_view()));
+	assert(bytes_equal(reusable, first_expected));
 }
 
 fn void test_pcap_writer_writes_classic_ethernet_pcap() @test {
-	List{char} output;
+	ByteWriter output;
 	output.tinit();
 	PcapWriter writer = { .output = &output };
 
@@ -125,7 +120,7 @@ fn void test_pcap_writer_writes_classic_ethernet_pcap() @test {
 }
 
 fn void test_pcap_writer_requires_header() @test {
-	List{char} output;
+	ByteWriter output;
 	output.tinit();
 	PcapWriter writer = { .output = &output };
 
