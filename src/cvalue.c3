@@ -23,7 +23,9 @@ fn usz bit_width_for_type_name(String type_name) {
 	if (try range_width) return range_width;
 	if (type_name.len > 1 && type_name[0] == 'b') {
 		ulong? width = type_name[1..].to_ulong();
-		if (try width) return (usz)width;
+		// Bound plain `bN` to 1..64 to match `bN_ranges` and the DSL
+		// validator; wider widths cannot be represented by a `ulong` value.
+		if (try width && width >= 1 && width <= 64) return (usz)width;
 	}
 	return 0;
 }
