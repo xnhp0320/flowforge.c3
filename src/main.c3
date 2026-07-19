@@ -4,6 +4,7 @@ import flowforge::parser;
 import flowforge::checker;
 import flowforge::file_program;
 import flowforge::generator;
+import flowforge::header_file;
 import flowforge::pcap;
 import flowforge::registry;
 import flowforge::runtime;
@@ -11,17 +12,33 @@ import std::collections::list;
 import std::io;
 import std::io::file;
 
+faultdef HEADER_LOAD_ERR;
+
 fn int usage(String prog) {
-	io::eprintfn("Usage: %s [--parse-only] <program.packet>", prog);
-	io::eprintfn("       %s [--parse-only] -e '<packet expression>'", prog);
-	io::eprintfn("       %s -w <out.pcap> [-c <count>] <program.packet>", prog);
-	io::eprintfn("       %s -w <out.pcap> [-c <count>] -e '<packet expression>'", prog);
-	io::eprintfn("       %s [--clone <n>] [--split] [--once] [--stats-interval <sec>] <program.packet>", prog);
-	io::eprintfn("       %s --capture [<out.pcap>] <program.packet>", prog);
+	io::eprintfn("Usage: %s [--headers <file>] [--parse-only] <program.packet>", prog);
+	io::eprintfn("       %s [--headers <file>] [--parse-only] -e '<packet expression>'", prog);
+	io::eprintfn("       %s [--headers <file>] -w <out.pcap> [-c <count>] <program.packet>", prog);
+	io::eprintfn("       %s [--headers <file>] -w <out.pcap> [-c <count>] -e '<packet expression>'", prog);
+	io::eprintfn("       %s [--headers <file>] [--clone <n>] [--split] [--once] [--stats-interval <sec>] <program.packet>", prog);
+	io::eprintfn("       %s [--headers <file>] --capture [<out.pcap>] <program.packet>", prog);
 	return 1;
 }
 
-fn int run_check(String input, bool parse_only) {
+<* Builds the protocol registry, augmenting the predefined headers/inference
+   rules with any user-defined headers loaded from `--headers <file>`. Prints
+   diagnostics and fails when the header file contains errors. *>
+fn Registry*? build_registry(String headers_content) {
+	Registry* reg = mem::tnew(Registry, registry::create_default_registry());
+	if (headers_content.len == 0) return reg;
+
+	HeaderFileResult result = header_file::load(reg, headers_content);
+	foreach (w : result.warnings) io::eprintfn("WARNING: %s", w);
+	foreach (e : result.errors) io::eprintfn("ERROR: %s", e);
+	if (!result.ok) return HEADER_LOAD_ERR~;
+	return reg;
+}
+
+fn int run_check(String input, bool parse_only, Registry* reg) {
 	Parser p;
 	p.init(input);
 
@@ -34,7 +51,7 @@ fn int run_check(String input, bool parse_only) {
 	io::printfn("parsed packet with %d header(s)", packet.len);
 	if (parse_only) return 0;
 
-	CheckResult result = checker::checker_with_default().check(packet);
+	CheckResult result = checker::checker_with_registry(reg).check(packet);
 	foreach (w : result.warnings) io::eprintfn("WARNING: %s", w);
 	foreach (e : result.errors) io::eprintfn("ERROR: %s", e);
 	if (!result.ok) return 1;
@@ -43,7 +60,7 @@ fn int run_check(String input, bool parse_only) {
 	return 0;
 }
 
-fn int run_program(String input, bool parse_only) {
+fn int run_program(String input, bool parse_only, Registry* reg) {
 	Parser p;
 	p.init(input);
 	Program? program = p.parse();
@@ -55,7 +72,7 @@ fn int run_program(String input, bool parse_only) {
 	io::printfn("parsed program with %d variable(s)", program.variables.len);
 	if (parse_only) return 0;
 
-	Checker checker = checker::checker_with_default();
+	Checker checker = checker::checker_with_registry(reg);
 	bool ok = true;
 	foreach (variable : program.variables) {
 		ScalarValue? value = ast::evaluate(variable.expression);
@@ -76,9 +93,8 @@ fn int run_program(String input, bool parse_only) {
 }
 
 <* Expands the packet's flows and streams them to `output_path` as a pcap. *>
-fn int run_file_mode(Packet packet, generator::MaybeCount count, String output_path) {
-	Registry reg = registry::create_default_registry();
-	PacketGenerator gen = { .registry = &reg };
+fn int run_file_mode(Packet packet, generator::MaybeCount count, String output_path, Registry* reg) {
+	PacketGenerator gen = { .registry = reg };
 
 	PacketGenerationResult result = gen.prepare(packet, count, {}, mem);
 	foreach (w : result.warnings) io::eprintfn("WARNING: %s", w);
@@ -125,7 +141,7 @@ fn int run_file_mode(Packet packet, generator::MaybeCount count, String output_p
 	return 0;
 }
 
-fn int file_mode_inline(String inline_expr, generator::MaybeCount count, String output_path) {
+fn int file_mode_inline(String inline_expr, generator::MaybeCount count, String output_path, Registry* reg) {
 	String expr = inline_expr;
 	if (expr.starts_with("PACKET:")) expr = expr["PACKET:".len..].trim();
 
@@ -136,10 +152,10 @@ fn int file_mode_inline(String inline_expr, generator::MaybeCount count, String 
 		io::eprintfn("parse error: %s", p.last_error_msg());
 		return 1;
 	}
-	return run_file_mode(packet, count, output_path);
+	return run_file_mode(packet, count, output_path, reg);
 }
 
-fn int file_mode_file(String content, generator::MaybeCount cli_count, String output_path) {
+fn int file_mode_file(String content, generator::MaybeCount cli_count, String output_path, Registry* reg) {
 	Parser p;
 	p.init(content);
 
@@ -153,7 +169,7 @@ fn int file_mode_file(String content, generator::MaybeCount cli_count, String ou
 		foreach (w : parsed.warnings) io::eprintfn("WARNING: %s", w);
 		foreach (e : parsed.errors) io::eprintfn("ERROR: %s", e);
 		if (!parsed.ok) return 1;
-		return run_file_mode(parsed.packet, parsed.packet_count, output_path);
+		return run_file_mode(parsed.packet, parsed.packet_count, output_path, reg);
 	}
 
 	Packet? packet = p.parse_packet();
@@ -161,11 +177,11 @@ fn int file_mode_file(String content, generator::MaybeCount cli_count, String ou
 		io::eprintfn("parse error: %s", p.last_error_msg());
 		return 1;
 	}
-	return run_file_mode(packet, cli_count, output_path);
+	return run_file_mode(packet, cli_count, output_path, reg);
 }
 
 <* DPDK-free validation of a runtime program (mirrors Runtime.check). *>
-fn int run_runtime_check(String content, RunOptions options) {
+fn int run_runtime_check(String content, RunOptions options, Registry* reg) {
 	Parser p;
 	p.init(content);
 	Program? program = p.parse();
@@ -174,7 +190,7 @@ fn int run_runtime_check(String content, RunOptions options) {
 		return 1;
 	}
 
-	Runtime rt = runtime::runtime_with_default();
+	Runtime rt = runtime::runtime_with_registry(reg);
 	Result result = rt.check(program, options);
 	foreach (w : result.warnings) io::eprintfn("WARNING: %s", w);
 	foreach (e : result.errors) io::eprintfn("ERROR: %s", e);
@@ -187,7 +203,7 @@ fn int run_runtime_check(String content, RunOptions options) {
 
 <* Live DPDK mode: parses a runtime program (with DPDK_ARGS) and transmits or
    captures traffic via the EAL-backed runtime. Requires root / TAP access. *>
-fn int run_live_mode(String content, String program_name, RunOptions options) {
+fn int run_live_mode(String content, String program_name, RunOptions options, Registry* reg) {
 	Parser p;
 	p.init(content);
 	Program? program = p.parse();
@@ -196,7 +212,7 @@ fn int run_live_mode(String content, String program_name, RunOptions options) {
 		return 1;
 	}
 
-	Runtime rt = runtime::runtime_with_default();
+	Runtime rt = runtime::runtime_with_registry(reg);
 	Result result = rt.run(program, program_name, options);
 	foreach (w : result.warnings) io::eprintfn("WARNING: %s", w);
 	foreach (e : result.errors) io::eprintfn("ERROR: %s", e);
@@ -239,6 +255,7 @@ fn int main(String[] args) {
 	String inline_expr = "";
 	bool use_inline = false;
 	String output_path = "";
+	String headers_path = "";
 	generator::MaybeCount cli_count;
 
 	RunOptions live_options = runtime::default_run_options();
@@ -251,6 +268,10 @@ fn int main(String[] args) {
 		}
 		else if (args[i] == "--check") {
 			check_only = true;
+		}
+		else if (args[i] == "--headers") {
+			if (i + 1 >= args.len) return usage(args[0]);
+			headers_path = args[++i];
 		}
 		else if (args[i] == "-e") {
 			if (i + 1 >= args.len) return usage(args[0]);
@@ -325,21 +346,34 @@ fn int main(String[] args) {
 		}
 	}
 
+	String headers_content = "";
+	if (headers_path.len) {
+		char[]? hdr_bytes = file::load(tmem, headers_path);
+		if (catch hdr_bytes) {
+			io::eprintfn("failed to read '%s'", headers_path);
+			return 1;
+		}
+		headers_content = (String)hdr_bytes;
+	}
+
+	Registry*? reg = build_registry(headers_content);
+	if (catch reg) return 1;
+
 	if (output_path.len) {
-		if (use_inline) return file_mode_inline(inline_expr, cli_count, output_path);
+		if (use_inline) return file_mode_inline(inline_expr, cli_count, output_path, reg);
 		if (!input_path.len) return usage(args[0]);
 		char[]? bytes = file::load(tmem, input_path);
 		if (catch bytes) {
 			io::eprintfn("failed to read '%s'", input_path);
 			return 1;
 		}
-		return file_mode_file((String)bytes, cli_count, output_path);
+		return file_mode_file((String)bytes, cli_count, output_path, reg);
 	}
 
 	if (use_inline) {
 		String expr = inline_expr;
 		if (expr.starts_with("PACKET:")) expr = expr["PACKET:".len..].trim();
-		return run_check(expr, parse_only);
+		return run_check(expr, parse_only, reg);
 	}
 
 	if (!input_path.len) return usage(args[0]);
@@ -353,13 +387,13 @@ fn int main(String[] args) {
 
 	// `--check` validates a runtime program (DPDK-free) without touching the EAL.
 	if (check_only) {
-		return run_runtime_check(content, live_options);
+		return run_runtime_check(content, live_options, reg);
 	}
 
 	// Live DPDK mode: a runtime program declares DPDK_ARGS. Unless the user only
 	// asked to parse/check, drive the EAL-backed runtime (TX or capture).
 	if (!parse_only && (live_options.capture || content.contains("DPDK_ARGS:"))) {
-		return run_live_mode(content, args[0], live_options);
+		return run_live_mode(content, args[0], live_options, reg);
 	}
 	if (live_flag_present) {
 		io::eprintfn("live options require a runtime program with a DPDK_ARGS variable");
@@ -367,7 +401,7 @@ fn int main(String[] args) {
 	}
 
 	if (content.contains("PACKET:")) {
-		return run_program(content, parse_only);
+		return run_program(content, parse_only, reg);
 	}
-	return run_check(content, parse_only);
+	return run_check(content, parse_only, reg);
 }

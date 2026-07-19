@@ -91,3 +91,5 @@ fn void Checker.validate_or_exit(&self, Packet packet) {
 }
 
 fn Checker checker_with_default() => { .registry = mem::tnew(Registry, registry::create_default_registry()) };
+
+fn Checker checker_with_registry(Registry* registry) => { .registry = registry };
