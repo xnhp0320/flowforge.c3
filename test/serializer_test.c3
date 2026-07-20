@@ -177,6 +177,28 @@ fn void test_serializes_first_range_value_into_base_payload() @test {
 	assert(dst_modifier.value_count == 2);
 }
 
+fn void test_single_value_range_fields_do_not_create_modifiers() @test {
+	BuildResult built = build_default(
+		`Ether()/IP(src="192.0.2.10",dst="192.0.2.1")/UDP(sport=12345,dport=5678)`);
+	assert(built.ok);
+	char[42] buf;
+	SerializeResult result = serialize_into(built.packet, buf[..]);
+
+	assert(result.ok);
+	assert(result.modifiers.len == 0);
+}
+
+fn void test_single_element_range_lists_do_not_create_modifiers() @test {
+	BuildResult built = build_default(
+		`Ether()/IP(src="[192.0.2.10]",dst="192.0.2.1")/UDP(sport="[12345]",dport=5678)`);
+	assert(built.ok);
+	char[42] buf;
+	SerializeResult result = serialize_into(built.packet, buf[..]);
+
+	assert(result.ok);
+	assert(result.modifiers.len == 0);
+}
+
 fn void test_serializes_first_ipv6_range_value_into_base_payload() @test {
 	BuildResult built = build_default(`IPv6(src="[2001:db8::2-2001:db8::4]")`);
 	assert(built.ok);

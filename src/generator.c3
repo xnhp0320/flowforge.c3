@@ -142,6 +142,7 @@ fn bool PacketGenerator.apply_flow_checksums_only(&self, GeneratedPacket* packet
 		errors.push("payload buffer is smaller than the packet length");
 		return false;
 	}
+	if (packet.modifiers.len == 0) return true;
 
 	char[] packet_payload = payload[:packet.packet_len];
 	if (!apply_flow_index(packet_payload, packet.modifiers, flow_index, errors)) {

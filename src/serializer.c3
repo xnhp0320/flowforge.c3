@@ -471,18 +471,22 @@ fn PayloadFieldModifier? make_modifier(HeaderConstructor header, FieldSpec* spec
 
 	switch (field.value.kind) {
 		case IPV4_RANGE:
+			ulong count = ipv4_range_count(field.value.ipv4_range_val);
+			if (count <= 1) return NO_MODIFIER~;
 			IPv4Range[] one = mem::temp_array(IPv4Range, 1);
 			one[0] = field.value.ipv4_range_val;
 			modifier.values_kind = ModifierValueKind.IPV4_RANGES;
 			modifier.ipv4_ranges = one;
-			modifier.value_count = ipv4_range_count(field.value.ipv4_range_val);
+			modifier.value_count = count;
 			return modifier;
 		case IPV6_RANGE:
+			ulong count = ipv6_range_count(field.value.ipv6_range_val);
+			if (count <= 1) return NO_MODIFIER~;
 			IPv6Range[] one = mem::temp_array(IPv6Range, 1);
 			one[0] = field.value.ipv6_range_val;
 			modifier.values_kind = ModifierValueKind.IPV6_RANGES;
 			modifier.ipv6_ranges = one;
-			modifier.value_count = ipv6_range_count(field.value.ipv6_range_val);
+			modifier.value_count = count;
 			return modifier;
 		case UINT_RANGES:
 			UIntRange[] ranges = field.value.uint_ranges_val;
@@ -490,9 +494,11 @@ fn PayloadFieldModifier? make_modifier(HeaderConstructor header, FieldSpec* spec
 				errors.push(string::tformat("field '%s' has an empty integer range list", field.name));
 				return NO_MODIFIER~;
 			}
+			ulong count = total_uint_value_count(ranges);
+			if (count <= 1) return NO_MODIFIER~;
 			modifier.values_kind = ModifierValueKind.UINT_RANGES;
 			modifier.uint_ranges = ranges;
-			modifier.value_count = total_uint_value_count(ranges);
+			modifier.value_count = count;
 			return modifier;
 		case IPV4_RANGES:
 			IPv4Range[] ranges4 = field.value.ipv4_ranges_val;
@@ -500,9 +506,11 @@ fn PayloadFieldModifier? make_modifier(HeaderConstructor header, FieldSpec* spec
 				errors.push(string::tformat("field '%s' has an empty ipv4 range list", field.name));
 				return NO_MODIFIER~;
 			}
+			ulong count = total_ipv4_value_count(ranges4);
+			if (count <= 1) return NO_MODIFIER~;
 			modifier.values_kind = ModifierValueKind.IPV4_RANGES;
 			modifier.ipv4_ranges = ranges4;
-			modifier.value_count = total_ipv4_value_count(ranges4);
+			modifier.value_count = count;
 			return modifier;
 		case IPV6_RANGES:
 			IPv6Range[] ranges6 = field.value.ipv6_ranges_val;
@@ -510,9 +518,11 @@ fn PayloadFieldModifier? make_modifier(HeaderConstructor header, FieldSpec* spec
 				errors.push(string::tformat("field '%s' has an empty ipv6 range list", field.name));
 				return NO_MODIFIER~;
 			}
+			ulong count = total_ipv6_value_count(ranges6);
+			if (count <= 1) return NO_MODIFIER~;
 			modifier.values_kind = ModifierValueKind.IPV6_RANGES;
 			modifier.ipv6_ranges = ranges6;
-			modifier.value_count = total_ipv6_value_count(ranges6);
+			modifier.value_count = count;
 			return modifier;
 		default:
 			return NO_MODIFIER~;
