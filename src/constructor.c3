@@ -35,9 +35,14 @@ typedef PacketConstructor = HeaderConstructor[];
 
 struct BuildResult {
 	bool ok;
-	String[] warnings;
-	String[] errors;
+	List{String} warnings;
+	List{String} errors;
 	PacketConstructor packet;
+}
+
+fn void BuildResult.tinit(&self) {
+	self.warnings.tinit();
+	self.errors.tinit();
 }
 
 fn ScalarValue? scalar_attribute_value(Attribute* attr, String* error) {
@@ -324,10 +329,8 @@ fn void apply_inference_rules(List{HeaderConstructor}* constructor, Registry* re
 
 <* @param [&in] registry : `read-only protocol definitions` *>
 fn BuildResult build(Registry* registry, Packet packet) {
-	List{String} warnings;
-	warnings.tinit();
-	List{String} errors;
-	errors.tinit();
+	BuildResult result;
+	result.tinit();
 	List{HeaderConstructor} constructor;
 	constructor.tinit();
 	usz packet_bit_offset = 0;
@@ -335,11 +338,11 @@ fn BuildResult build(Registry* registry, Packet packet) {
 	foreach (header : packet) {
 		HeaderSpec*? header_spec = registry.find_header(header.protocol);
 		if (catch header_spec) {
-			errors.push(string::tformat("unknown header: '%s'", header.protocol));
+			result.errors.push(string::tformat("unknown header: '%s'", header.protocol));
 			continue;
 		}
 		if (packet_bit_offset % 8 != 0) {
-			errors.push(string::tformat("header '%s' starts at non-byte offset %d", header.protocol, packet_bit_offset));
+			result.errors.push(string::tformat("header '%s' starts at non-byte offset %d", header.protocol, packet_bit_offset));
 			continue;
 		}
 
@@ -347,7 +350,7 @@ fn BuildResult build(Registry* registry, Packet packet) {
 		attrs.tinit();
 		foreach (attr : header.attributes) {
 			if (attrs.has_key(attr.name)) {
-				errors.push(string::tformat("duplicate attribute '%s' in header '%s'", attr.name, header.protocol));
+				result.errors.push(string::tformat("duplicate attribute '%s' in header '%s'", attr.name, header.protocol));
 				continue;
 			}
 			attrs.set(attr.name, attr);
@@ -368,14 +371,14 @@ fn BuildResult build(Registry* registry, Packet packet) {
 			String err = "";
 			ScalarValue? attr_value = scalar_attribute_value(&attr, &err);
 			if (catch attr_value) {
-				errors.push(string::tformat("attribute '%s' in header '%s' %s", attr.name, header.protocol, err));
+				result.errors.push(string::tformat("attribute '%s' in header '%s' %s", attr.name, header.protocol, err));
 				continue;
 			}
 
 			String verr = "";
 			ConstructorValue? value = construct_value(field.type_name, field.bit_width, attr_value, &verr);
 			if (catch value) {
-				errors.push(string::tformat("invalid '%s' in header '%s': %s", attr.name, header.protocol, verr));
+				result.errors.push(string::tformat("invalid '%s' in header '%s': %s", attr.name, header.protocol, verr));
 				continue;
 			}
 			field_list.push({ .name = field.name, .value = value, .explicitly_set = true });
@@ -400,15 +403,15 @@ fn BuildResult build(Registry* registry, Packet packet) {
 				String err = "";
 				Packet? packet_value = packet_attribute_value(&attr, &err);
 				if (catch packet_value) {
-					errors.push(string::tformat("attribute '%s' in header '%s' %s", attr.name, header.protocol, err));
+					result.errors.push(string::tformat("attribute '%s' in header '%s' %s", attr.name, header.protocol, err));
 					continue;
 				}
 
 				BuildResult nested = build(registry, packet_value);
-				foreach (w : nested.warnings) warnings.push(w);
+				foreach (w : nested.warnings) result.warnings.push(w);
 				if (!nested.ok) {
 					foreach (nerr : nested.errors) {
-						errors.push(string::tformat("invalid packet option '%s.%s': %s", header.protocol, attr.name, nerr));
+						result.errors.push(string::tformat("invalid packet option '%s.%s': %s", header.protocol, attr.name, nerr));
 					}
 					continue;
 				}
@@ -424,7 +427,7 @@ fn BuildResult build(Registry* registry, Packet packet) {
 				String err = "";
 				ScalarValue? attr_value = scalar_attribute_value(&attr, &err);
 				if (catch attr_value) {
-					errors.push(string::tformat("attribute '%s' in header '%s' %s", attr.name, header.protocol, err));
+					result.errors.push(string::tformat("attribute '%s' in header '%s' %s", attr.name, header.protocol, err));
 					continue;
 				}
 
@@ -432,7 +435,7 @@ fn BuildResult build(Registry* registry, Packet packet) {
 				usz opt_bit_width = cvalue::bit_width_for_type_name(option.type_name);
 				ConstructorValue? value = construct_value(option.type_name, opt_bit_width, attr_value, &verr);
 				if (catch value) {
-					errors.push(string::tformat("invalid '%s' in header '%s': %s", attr.name, header.protocol, verr));
+					result.errors.push(string::tformat("invalid '%s' in header '%s': %s", attr.name, header.protocol, verr));
 					continue;
 				}
 				option_list.push({
@@ -460,7 +463,7 @@ fn BuildResult build(Registry* registry, Packet packet) {
 				}
 			}
 			if (!known_field && !known_option) {
-				errors.push(string::tformat("unknown attribute '%s' in header '%s'", name, header.protocol));
+				result.errors.push(string::tformat("unknown attribute '%s' in header '%s'", name, header.protocol));
 			}
 		}
 
@@ -471,30 +474,23 @@ fn BuildResult build(Registry* registry, Packet packet) {
 			.options = option_list.to_tarray(),
 		};
 
-		usz option_bit_width = header_option_bit_width(&header_constructor, registry, &errors);
+		usz option_bit_width = header_option_bit_width(&header_constructor, registry, &result.errors);
 
 		constructor.push(header_constructor);
 		packet_bit_offset += header_spec.bit_width + option_bit_width;
 		if (packet_bit_offset % 8 == 0) {
 			HeaderConstructor* last = constructor.get_ref((sz)constructor.len() - 1);
-			packet_bit_offset += payload_bit_width(last, packet_bit_offset, &errors);
+			packet_bit_offset += payload_bit_width(last, packet_bit_offset, &result.errors);
 		}
 	}
 
-	if (errors.len() > 0) {
-		return { .ok = false, .warnings = warnings.to_tarray(), .errors = errors.to_tarray() };
-	}
+	if (result.errors.len() > 0) return result;
 
-	apply_inference_rules(&constructor, registry, &warnings, &errors);
+	apply_inference_rules(&constructor, registry, &result.warnings, &result.errors);
 
-	if (errors.len() > 0) {
-		return { .ok = false, .warnings = warnings.to_tarray(), .errors = errors.to_tarray() };
-	}
+	if (result.errors.len() > 0) return result;
 
-	return {
-		.ok = true,
-		.warnings = warnings.to_tarray(),
-		.errors = errors.to_tarray(),
-		.packet = (PacketConstructor)constructor.to_tarray(),
-	};
+	result.ok = true;
+	result.packet = (PacketConstructor)constructor.to_tarray();
+	return result;
 }

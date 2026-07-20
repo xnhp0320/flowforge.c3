@@ -9,8 +9,8 @@ fn void test_checker_all_known_headers() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
-	assert(result.errors.len == 0);
-	assert(result.warnings.len == 0);
+	assert(result.errors.len() == 0);
+	assert(result.warnings.len() == 0);
 }
 
 fn void test_checker_unknown_header() @test {
@@ -18,7 +18,7 @@ fn void test_checker_unknown_header() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 	assert(result.errors[0].contains("BadProtocol"));
 }
 
@@ -27,7 +27,7 @@ fn void test_checker_known_attrs_no_warnings() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
-	assert(result.warnings.len == 0);
+	assert(result.warnings.len() == 0);
 }
 
 fn void test_checker_unknown_attribute_warning() @test {
@@ -35,7 +35,7 @@ fn void test_checker_unknown_attribute_warning() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
-	assert(result.warnings.len == 1);
+	assert(result.warnings.len() == 1);
 	assert(result.warnings[0].contains("foobar"));
 	assert(result.warnings[0].contains("Ether"));
 }
@@ -45,8 +45,8 @@ fn void test_checker_mixed_errors_and_warnings() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
-	assert(result.warnings.len == 1);
+	assert(result.errors.len() == 1);
+	assert(result.warnings.len() == 1);
 }
 
 fn void test_checker_scapy_style_semantic_check() @test {
@@ -54,8 +54,8 @@ fn void test_checker_scapy_style_semantic_check() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
-	assert(result.errors.len == 0);
-	assert(result.warnings.len == 0);
+	assert(result.errors.len() == 0);
+	assert(result.warnings.len() == 0);
 }
 
 fn void test_checker_tcp_all_attrs() @test {
@@ -63,7 +63,7 @@ fn void test_checker_tcp_all_attrs() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
-	assert(result.warnings.len == 0);
+	assert(result.warnings.len() == 0);
 }
 
 fn void test_checker_udp_attrs() @test {
@@ -71,7 +71,7 @@ fn void test_checker_udp_attrs() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
-	assert(result.warnings.len == 0);
+	assert(result.warnings.len() == 0);
 }
 
 fn void test_checker_icmp_attrs() @test {
@@ -79,7 +79,7 @@ fn void test_checker_icmp_attrs() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
-	assert(result.warnings.len == 0);
+	assert(result.warnings.len() == 0);
 }
 
 fn void test_checker_vlan_attrs() @test {
@@ -87,7 +87,7 @@ fn void test_checker_vlan_attrs() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
-	assert(result.warnings.len == 0);
+	assert(result.warnings.len() == 0);
 }
 
 fn void test_checker_vxlan_attrs() @test {
@@ -95,7 +95,7 @@ fn void test_checker_vxlan_attrs() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
-	assert(result.warnings.len == 0);
+	assert(result.warnings.len() == 0);
 }
 
 fn void test_checker_custom_header_registration() @test {
@@ -108,8 +108,8 @@ fn void test_checker_custom_header_registration() @test {
 	Checker checker = { .registry = &reg };
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
-	assert(result.errors.len == 0);
-	assert(result.warnings.len == 0);
+	assert(result.errors.len() == 0);
+	assert(result.warnings.len() == 0);
 }
 
 fn void test_checker_custom_header_unknown_attr() @test {
@@ -122,7 +122,7 @@ fn void test_checker_custom_header_unknown_attr() @test {
 	Checker checker = { .registry = &reg };
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
-	assert(result.warnings.len == 1);
+	assert(result.warnings.len() == 1);
 }
 
 fn void test_checker_validate_or_exit_does_not_exit_on_valid() @test {
@@ -136,7 +136,7 @@ fn void test_checker_valid_mac_addr() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
-	assert(result.errors.len == 0);
+	assert(result.errors.len() == 0);
 }
 
 fn void test_checker_invalid_mac_addr_too_short() @test {
@@ -144,7 +144,7 @@ fn void test_checker_invalid_mac_addr_too_short() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 	assert(result.errors[0].contains("dst"));
 }
 
@@ -153,7 +153,7 @@ fn void test_checker_invalid_mac_addr_non_hex() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 	assert(result.errors[0].contains("dst"));
 }
 
@@ -162,7 +162,7 @@ fn void test_checker_invalid_mac_addr_missing_colon() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 }
 
 fn void test_checker_valid_ipv4_addr() @test {
@@ -170,7 +170,7 @@ fn void test_checker_valid_ipv4_addr() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
-	assert(result.errors.len == 0);
+	assert(result.errors.len() == 0);
 }
 
 fn void test_checker_invalid_ipv4_bad_octet() @test {
@@ -178,7 +178,7 @@ fn void test_checker_invalid_ipv4_bad_octet() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 	assert(result.errors[0].contains("src"));
 }
 
@@ -187,7 +187,7 @@ fn void test_checker_invalid_ipv4_too_few_dots() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 }
 
 fn void test_checker_invalid_ipv4_non_numeric() @test {
@@ -202,7 +202,7 @@ fn void test_checker_valid_ipv6_addr() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
-	assert(result.errors.len == 0);
+	assert(result.errors.len() == 0);
 }
 
 fn void test_checker_valid_ipv6_full_addr() @test {
@@ -210,7 +210,7 @@ fn void test_checker_valid_ipv6_full_addr() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
-	assert(result.errors.len == 0);
+	assert(result.errors.len() == 0);
 }
 
 fn void test_checker_valid_ipv6_loopback() @test {
@@ -218,7 +218,7 @@ fn void test_checker_valid_ipv6_loopback() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
-	assert(result.errors.len == 0);
+	assert(result.errors.len() == 0);
 }
 
 fn void test_checker_invalid_ipv6_double_double_colon() @test {
@@ -226,7 +226,7 @@ fn void test_checker_invalid_ipv6_double_double_colon() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 }
 
 fn void test_checker_invalid_ipv6_bad_hex_group() @test {
@@ -256,7 +256,7 @@ fn void test_checker_ip_both_src_and_dst_valid() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
-	assert(result.errors.len == 0);
+	assert(result.errors.len() == 0);
 }
 
 fn void test_checker_unknown_attr_skipped_no_format_error() @test {
@@ -264,8 +264,8 @@ fn void test_checker_unknown_attr_skipped_no_format_error() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
-	assert(result.warnings.len == 1);
-	assert(result.errors.len == 0);
+	assert(result.warnings.len() == 1);
+	assert(result.errors.len() == 0);
 }
 
 fn void test_checker_custom_type_registration() @test {
@@ -276,7 +276,7 @@ fn void test_checker_custom_type_registration() @test {
 	Checker checker = { .registry = &reg };
 	CheckResult result = checker.check(pkt);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 	assert(result.errors[0].contains("always fails"));
 }
 
@@ -285,7 +285,7 @@ fn void test_checker_bit_field_in_range() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
-	assert(result.errors.len == 0);
+	assert(result.errors.len() == 0);
 }
 
 fn void test_checker_bit_field_out_of_range() @test {
@@ -293,7 +293,7 @@ fn void test_checker_bit_field_out_of_range() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 	assert(result.errors[0].contains("dport"));
 	assert(result.errors[0].contains("16"));
 }
@@ -303,7 +303,7 @@ fn void test_checker_bit_field_negative() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 }
 
 fn void test_checker_bit_field_at_max() @test {
@@ -311,7 +311,7 @@ fn void test_checker_bit_field_at_max() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
-	assert(result.errors.len == 0);
+	assert(result.errors.len() == 0);
 }
 
 fn void test_checker_bit_field_b1_zero() @test {
@@ -328,7 +328,7 @@ fn void test_checker_bit_field_b64() @test {
 	Checker checker = { .registry = &reg };
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
-	assert(result.errors.len == 0);
+	assert(result.errors.len() == 0);
 }
 
 fn void test_checker_bit_field_must_be_integer() @test {
@@ -344,7 +344,7 @@ fn void test_checker_port_fields_accept_ranges() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
-	assert(result.errors.len == 0);
+	assert(result.errors.len() == 0);
 }
 
 fn void test_checker_bit_field_b4_max() @test {
@@ -359,7 +359,7 @@ fn void test_checker_bit_field_b4_overflow() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(!result.ok);
-	assert(result.errors.len == 2);
+	assert(result.errors.len() == 2);
 }
 
 fn void test_checker_bit_field_b20_at_max() @test {
@@ -374,7 +374,7 @@ fn void test_checker_bit_field_b20_overflow() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 	assert(result.errors[0].contains("20"));
 }
 
@@ -385,7 +385,7 @@ fn void test_checker_bit_range_list_accepts_scalar_integer() @test {
 	Checker checker = { .registry = &reg };
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
-	assert(result.errors.len == 0);
+	assert(result.errors.len() == 0);
 }
 
 fn void test_checker_bit_range_list_accepts_scalar_string() @test {
@@ -395,7 +395,7 @@ fn void test_checker_bit_range_list_accepts_scalar_string() @test {
 	Checker checker = { .registry = &reg };
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
-	assert(result.errors.len == 0);
+	assert(result.errors.len() == 0);
 }
 
 fn void test_checker_bit_range_list_accepts_range_and_list() @test {
@@ -408,7 +408,7 @@ fn void test_checker_bit_range_list_accepts_range_and_list() @test {
 	Checker checker = { .registry = &reg };
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
-	assert(result.errors.len == 0);
+	assert(result.errors.len() == 0);
 }
 
 fn void test_checker_bit_range_list_accepts_hex_and_binary() @test {
@@ -421,7 +421,7 @@ fn void test_checker_bit_range_list_accepts_hex_and_binary() @test {
 	Checker checker = { .registry = &reg };
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
-	assert(result.errors.len == 0);
+	assert(result.errors.len() == 0);
 }
 
 fn void test_checker_bit_range_list_rejects_out_of_width_value() @test {
@@ -431,7 +431,7 @@ fn void test_checker_bit_range_list_rejects_out_of_width_value() @test {
 	Checker checker = { .registry = &reg };
 	CheckResult result = checker.check(pkt);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 	assert(result.errors[0].contains("16 bits"));
 }
 
@@ -442,7 +442,7 @@ fn void test_checker_bit_range_list_rejects_negative_value() @test {
 	Checker checker = { .registry = &reg };
 	CheckResult result = checker.check(pkt);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 }
 
 fn void test_checker_bit_range_list_rejects_reversed_range() @test {
@@ -452,7 +452,7 @@ fn void test_checker_bit_range_list_rejects_reversed_range() @test {
 	Checker checker = { .registry = &reg };
 	CheckResult result = checker.check(pkt);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 	assert(result.errors[0].contains("greater"));
 }
 
@@ -466,7 +466,7 @@ fn void test_checker_bit_range_list_rejects_malformed_lists() @test {
 	Packet pkt = testutil::must_parse("MyHdr(empty=\"[]\",trailing=\"[1,]\")");
 	CheckResult result = checker.check(pkt);
 	assert(!result.ok);
-	assert(result.errors.len == 2);
+	assert(result.errors.len() == 2);
 }
 
 fn void test_checker_ipv4_single_address_in_range_type() @test {
@@ -474,7 +474,7 @@ fn void test_checker_ipv4_single_address_in_range_type() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
-	assert(result.errors.len == 0);
+	assert(result.errors.len() == 0);
 }
 
 fn void test_checker_ipv4_cidr() @test {
@@ -482,7 +482,7 @@ fn void test_checker_ipv4_cidr() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
-	assert(result.errors.len == 0);
+	assert(result.errors.len() == 0);
 }
 
 fn void test_checker_ipv4_cidr_mask_zero() @test {
@@ -504,7 +504,7 @@ fn void test_checker_ipv4_cidr_mask_out_of_range() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 	assert(result.errors[0].contains("33"));
 }
 
@@ -513,7 +513,7 @@ fn void test_checker_ipv4_cidr_bad_prefix() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 }
 
 fn void test_checker_ipv4_cidr_empty_mask() @test {
@@ -535,7 +535,7 @@ fn void test_checker_ipv4_range() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
-	assert(result.errors.len == 0);
+	assert(result.errors.len() == 0);
 }
 
 fn void test_checker_ipv4_range_list() @test {
@@ -543,7 +543,7 @@ fn void test_checker_ipv4_range_list() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
-	assert(result.errors.len == 0);
+	assert(result.errors.len() == 0);
 }
 
 fn void test_checker_ipv4_range_list_single_element() @test {
@@ -551,7 +551,7 @@ fn void test_checker_ipv4_range_list_single_element() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
-	assert(result.errors.len == 0);
+	assert(result.errors.len() == 0);
 }
 
 fn void test_checker_ipv4_range_list_bad_element() @test {
@@ -559,7 +559,7 @@ fn void test_checker_ipv4_range_list_bad_element() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 	assert(result.errors[0].contains("index 1"));
 }
 
@@ -568,7 +568,7 @@ fn void test_checker_ipv4_range_list_empty() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 }
 
 fn void test_checker_ipv4_range_list_trailing_comma() @test {
@@ -576,7 +576,7 @@ fn void test_checker_ipv4_range_list_trailing_comma() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 }
 
 fn void test_checker_ipv4_range_bad_left() @test {
@@ -584,7 +584,7 @@ fn void test_checker_ipv4_range_bad_left() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 }
 
 fn void test_checker_ipv4_range_bad_right() @test {
@@ -592,7 +592,7 @@ fn void test_checker_ipv4_range_bad_right() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 }
 
 fn void test_checker_ipv4_range_empty_right() @test {
@@ -607,7 +607,7 @@ fn void test_checker_ipv6_cidr() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
-	assert(result.errors.len == 0);
+	assert(result.errors.len() == 0);
 }
 
 fn void test_checker_ipv6_cidr_mask128() @test {
@@ -622,7 +622,7 @@ fn void test_checker_ipv6_cidr_mask_out_of_range() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 }
 
 fn void test_checker_ipv6_range() @test {
@@ -630,7 +630,7 @@ fn void test_checker_ipv6_range() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
-	assert(result.errors.len == 0);
+	assert(result.errors.len() == 0);
 }
 
 fn void test_checker_ipv6_range_list() @test {
@@ -638,5 +638,5 @@ fn void test_checker_ipv6_range_list() @test {
 	Checker checker = checker::checker_with_default();
 	CheckResult result = checker.check(pkt);
 	assert(result.ok);
-	assert(result.errors.len == 0);
+	assert(result.errors.len() == 0);
 }

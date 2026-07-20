@@ -55,7 +55,7 @@ fn int run_check(String input, bool parse_only, Registry* reg) {
 	foreach (w : result.warnings) io::eprintfn("WARNING: %s", w);
 	foreach (e : result.errors) io::eprintfn("ERROR: %s", e);
 	if (!result.ok) return 1;
-	if (result.warnings.len) io::eprintfn("%d warning(s) found.", result.warnings.len);
+	if (result.warnings.len()) io::eprintfn("%d warning(s) found.", result.warnings.len());
 	io::printn("check ok");
 	return 0;
 }

@@ -302,7 +302,7 @@ fn ulong checked_total_transmission_count(ulong planned_flows, ulong worker_coun
 	return per_worker * worker_count;
 }
 
-fn void append_strings(List{String}* dest, String[] src) {
+fn void append_strings(List{String}* dest, List{String} src) {
 	foreach (s : src) dest.push(s);
 }
 

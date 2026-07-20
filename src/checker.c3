@@ -8,8 +8,13 @@ import std::os;
 
 struct CheckResult {
 	bool ok;
-	String[] warnings;
-	String[] errors;
+	List{String} warnings;
+	List{String} errors;
+}
+
+fn void CheckResult.tinit(&self) {
+	self.warnings.tinit();
+	self.errors.tinit();
 }
 
 struct Checker {
@@ -18,22 +23,20 @@ struct Checker {
 
 <* @param [&in] self : `checking never mutates the checker or its registry` *>
 fn CheckResult Checker.check(&self, Packet packet) {
-	List{String} warnings;
-	warnings.tinit();
-	List{String} errors;
-	errors.tinit();
-	bool ok = true;
+	CheckResult result;
+	result.tinit();
+	result.ok = true;
 
 	foreach (header : packet) {
 		if (!self.registry.has_header(header.protocol)) {
-			errors.push(string::tformat("unknown header: '%s'", header.protocol));
-			ok = false;
+			result.errors.push(string::tformat("unknown header: '%s'", header.protocol));
+			result.ok = false;
 			continue;
 		}
 
 		foreach (attr : header.attributes) {
 			if (!self.registry.has_attr(header.protocol, attr.name)) {
-				warnings.push(string::tformat("unknown attribute '%s' in header '%s'", attr.name, header.protocol));
+				result.warnings.push(string::tformat("unknown attribute '%s' in header '%s'", attr.name, header.protocol));
 				continue;
 			}
 
@@ -47,16 +50,16 @@ fn CheckResult Checker.check(&self, Packet packet) {
 			if (catch type_name) {
 				if (value.kind == ScalarKind.PACKET) {
 					CheckResult nested = self.check(value.packet_val);
-					ok = ok && nested.ok;
-					foreach (w : nested.warnings) warnings.push(w);
-					foreach (e : nested.errors) errors.push(e);
+					result.ok = result.ok && nested.ok;
+					foreach (w : nested.warnings) result.warnings.push(w);
+					foreach (e : nested.errors) result.errors.push(e);
 				}
 				continue;
 			}
 
 			if (value.kind == ScalarKind.PACKET) {
-				errors.push(string::tformat("attribute '%s' in header '%s' requires a scalar value", attr.name, header.protocol));
-				ok = false;
+				result.errors.push(string::tformat("attribute '%s' in header '%s' requires a scalar value", attr.name, header.protocol));
+				result.ok = false;
 				continue;
 			}
 
@@ -64,18 +67,18 @@ fn CheckResult Checker.check(&self, Packet packet) {
 			if (catch failing) {
 				String err_msg = "";
 				if (!validate::validate_scalar_type(type_name, value, &err_msg)) {
-					errors.push(string::tformat("invalid '%s' in header '%s': %s", attr.name, header.protocol, err_msg));
-					ok = false;
+					result.errors.push(string::tformat("invalid '%s' in header '%s': %s", attr.name, header.protocol, err_msg));
+					result.ok = false;
 				}
 			}
 			else {
-				errors.push(string::tformat("invalid '%s' in header '%s': %s", attr.name, header.protocol, failing));
-				ok = false;
+				result.errors.push(string::tformat("invalid '%s' in header '%s': %s", attr.name, header.protocol, failing));
+				result.ok = false;
 			}
 		}
 	}
 
-	return { .ok = ok, .warnings = warnings.to_tarray(), .errors = errors.to_tarray() };
+	return result;
 }
 
 fn void Checker.validate_or_exit(&self, Packet packet) {
@@ -85,8 +88,8 @@ fn void Checker.validate_or_exit(&self, Packet packet) {
 	if (!result.ok) {
 		os::exit(1);
 	}
-	if (result.warnings.len) {
-		io::eprintfn("%d warning(s) found.", result.warnings.len);
+	if (result.warnings.len()) {
+		io::eprintfn("%d warning(s) found.", result.warnings.len());
 	}
 }
 

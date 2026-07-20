@@ -31,10 +31,15 @@ struct GeneratedPacket {
 
 struct PacketGenerationResult {
 	bool ok;
-	String[] warnings;
-	String[] errors;
+	List{String} warnings;
+	List{String} errors;
 	bool has_packet;
 	GeneratedPacket packet;
+}
+
+fn void PacketGenerationResult.tinit(&self) {
+	self.warnings.tinit();
+	self.errors.tinit();
 }
 
 struct PacketGenerator {
@@ -47,41 +52,30 @@ struct PacketGenerator {
    release them when `alloc` is a heap allocator. *>
 fn PacketGenerationResult PacketGenerator.prepare(&self, Packet packet, MaybeCount packet_count = {}, FixupOptions fixup_options = {}, Allocator alloc = tmem) {
 	PacketGenerationResult result;
-	List{String} warnings;
-	warnings.tinit();
-	List{String} errors;
-	errors.tinit();
+	result.tinit();
 
 	Checker checker = { .registry = self.registry };
 	CheckResult check = checker.check(packet);
-	foreach (w : check.warnings) warnings.push(w);
-	foreach (e : check.errors) errors.push(e);
+	foreach (w : check.warnings) result.warnings.push(w);
+	foreach (e : check.errors) result.errors.push(e);
 	if (!check.ok) {
-		result.warnings = warnings.to_tarray();
-		result.errors = errors.to_tarray();
 		return result;
 	}
 
 	BuildResult built = constructor::build(self.registry, packet);
-	foreach (w : built.warnings) warnings.push(w);
-	foreach (e : built.errors) errors.push(e);
+	foreach (w : built.warnings) result.warnings.push(w);
+	foreach (e : built.errors) result.errors.push(e);
 	if (!built.ok) {
-		result.warnings = warnings.to_tarray();
-		result.errors = errors.to_tarray();
 		return result;
 	}
 
 	GeneratedPacket generated;
-	if (!self.serialize_generated(built.packet, fixup_options, &generated, &errors, alloc)) {
-		result.warnings = warnings.to_tarray();
-		result.errors = errors.to_tarray();
+	if (!self.serialize_generated(built.packet, fixup_options, &generated, &result.errors, alloc)) {
 		return result;
 	}
 
 	FlowIndexPlan flow_plan;
-	if (!plan_flow_indexes(generated.modifiers, packet_count, &flow_plan, &errors)) {
-		result.warnings = warnings.to_tarray();
-		result.errors = errors.to_tarray();
+	if (!plan_flow_indexes(generated.modifiers, packet_count, &flow_plan, &result.errors)) {
 		return result;
 	}
 	generated.flow_plan = flow_plan;
@@ -89,8 +83,6 @@ fn PacketGenerationResult PacketGenerator.prepare(&self, Packet packet, MaybeCou
 	result.ok = true;
 	result.has_packet = true;
 	result.packet = generated;
-	result.warnings = warnings.to_tarray();
-	result.errors = errors.to_tarray();
 	return result;
 }
 

@@ -142,7 +142,7 @@ fn void test_infers_adjacent_protocol_fields() @test {
 	assert(result.ok);
 	HeaderConstructor[] p = hdrs(result);
 	assert(p.len == 4);
-	assert(result.warnings.len == 0);
+	assert(result.warnings.len() == 0);
 
 	HeaderConstructor ether = p[0];
 	HeaderConstructor vlan = p[1];
@@ -176,7 +176,7 @@ fn void test_explicit_protocol_field_overrides_inference_with_warning() @test {
 	assert(result.ok);
 	HeaderConstructor[] p = hdrs(result);
 	assert(p.len == 2);
-	assert(result.warnings.len == 1);
+	assert(result.warnings.len() == 1);
 	assert(result.warnings[0] == "explicit 'Ether.type' overrides inference from next header 'IP'");
 
 	HeaderConstructor ether = p[0];
@@ -187,7 +187,7 @@ fn void test_explicit_protocol_field_overrides_inference_with_warning() @test {
 fn void test_matching_explicit_protocol_field_does_not_warn() @test {
 	BuildResult result = build_default("Ether(type=0x0800)/IP()");
 	assert(result.ok);
-	assert(result.warnings.len == 0);
+	assert(result.warnings.len() == 0);
 
 	HeaderConstructor ether = hdrs(result)[0];
 	assert(get_field(ether, "type").value.uint_val == 0x0800);
@@ -295,21 +295,21 @@ fn void test_payload_total_length_calculates_payload_length() @test {
 fn void test_payload_total_length_rejects_too_small_packet() @test {
 	BuildResult result = build_default("Ether()/IP()/Payload(total_length=20)");
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 	assert(result.errors[0].contains("smaller than preceding header length 34"));
 }
 
 fn void test_payload_rejects_conflicting_length_options() @test {
 	BuildResult result = build_default("Ether()/Payload(length=10,total_length=64)");
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 	assert(result.errors[0].contains("cannot both be explicitly set"));
 }
 
 fn void test_unknown_header_fails() @test {
 	BuildResult result = build_default("BadHeader()");
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 	assert(result.errors[0] == "unknown header: 'BadHeader'");
 	assert(hdrs(result).len == 0);
 }
@@ -317,42 +317,42 @@ fn void test_unknown_header_fails() @test {
 fn void test_unknown_attribute_fails() @test {
 	BuildResult result = build_default("Ether(unknown=1)");
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 	assert(result.errors[0] == "unknown attribute 'unknown' in header 'Ether'");
 }
 
 fn void test_duplicate_attribute_fails() @test {
 	BuildResult result = build_default("UDP(sport=1,sport=2)");
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 	assert(result.errors[0] == "duplicate attribute 'sport' in header 'UDP'");
 }
 
 fn void test_name_only_attribute_fails() @test {
 	BuildResult result = build_default("TCP(SYN)");
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 	assert(result.errors[0] == "unknown attribute 'SYN' in header 'TCP'");
 }
 
 fn void test_known_name_only_attribute_fails() @test {
 	BuildResult result = build_default("TCP(flags)");
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 	assert(result.errors[0] == "attribute 'flags' in header 'TCP' requires a value");
 }
 
 fn void test_bit_width_overflow_fails() @test {
 	BuildResult result = build_default("TCP(dport=65536)");
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 	assert(result.errors[0].contains("16 bits"));
 }
 
 fn void test_vlan_bit_width_overflow_fails() @test {
 	BuildResult result = build_default("VLAN(vlan=4096)");
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 	assert(result.errors[0].contains("12 bits"));
 }
 
@@ -425,7 +425,7 @@ fn void test_packet_valued_option_rejects_scalar_value() @test {
 
 	BuildResult result = build_with("Outer(children=1)", &reg);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 	assert(result.errors[0].contains("requires a packet value"));
 }
 
@@ -436,7 +436,7 @@ fn void test_scalar_field_rejects_packet_value() @test {
 
 	BuildResult result = build_with("Outer(field=Inner(value=1))", &reg);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 	assert(result.errors[0].contains("requires a scalar value"));
 }
 
