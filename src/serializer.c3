@@ -1255,6 +1255,90 @@ fn FixupResult apply_checksum_fixup_plan(char[] buffer, PacketFixupPlan plan) {
 	return result;
 }
 
+<* Unchecked variant for the DPDK live Tx hot path. The caller must guarantee
+   `buffer.len >= plan.packet_len` during setup. *>
+fn FixupResult apply_checksum_fixup_plan_unchecked(char[] buffer, PacketFixupPlan plan) {
+	FixupResult result;
+	result.offload = plan.offload;
+	List{String} errors;
+	bool has_errors = false;
+	char[] payload = buffer[:plan.packet_len];
+
+	if (plan.outer_ipv4.has_value) {
+		Ipv4Fixup ipv4 = plan.outer_ipv4.value;
+		if (ipv4.checksum != FixupMode.DISABLED) {
+			write_u16(payload, ipv4.offset + 10, 0);
+			if (ipv4.checksum == FixupMode.SOFTWARE) {
+				write_u16(payload, ipv4.offset + 10, internet_checksum(checksum_sum(payload[ipv4.offset : ipv4.header_len])));
+			}
+		}
+	}
+	if (plan.outer_udp.has_value) {
+		write_u16(payload, plan.outer_udp.value.offset + 6, 0);
+	}
+
+	if (plan.ipv4.has_value) {
+		Ipv4Fixup ipv4 = plan.ipv4.value;
+		if (ipv4.checksum != FixupMode.DISABLED) {
+			write_u16(payload, ipv4.offset + 10, 0);
+			if (ipv4.checksum == FixupMode.SOFTWARE) {
+				write_u16(payload, ipv4.offset + 10, internet_checksum(checksum_sum(payload[ipv4.offset : ipv4.header_len])));
+			}
+		}
+	}
+
+	if (plan.udp.has_value) {
+		UdpFixup udp = plan.udp.value;
+		usz udp_len = plan.packet_len - udp.offset;
+		if (udp.checksum != FixupMode.DISABLED) {
+			write_u16(payload, udp.offset + 6, 0);
+
+			uint? pseudo = l4_pseudo_sum(payload, plan, UDP_PROTOCOL, (uint)udp_len);
+			if (catch pseudo) {
+				push_fixup_error(&errors, &has_errors, "UDP checksum requires IPv4 or IPv6 header");
+			}
+			else if (udp.checksum == FixupMode.SOFTWARE) {
+				ushort checksum = internet_checksum(pseudo + checksum_sum(payload[udp.offset : udp_len]));
+				if (checksum == 0) checksum = 0xffff;
+				write_u16(payload, udp.offset + 6, checksum);
+			}
+			else if (udp.checksum == FixupMode.HARDWARE_OFFLOAD) {
+				write_u16(payload, udp.offset + 6, fold_checksum(pseudo));
+			}
+		}
+	}
+	if (plan.tcp.has_value && plan.tcp.value.checksum != FixupMode.DISABLED) {
+		TcpFixup tcp = plan.tcp.value;
+		write_u16(payload, tcp.offset + 16, 0);
+		usz tcp_len = plan.packet_len - tcp.offset;
+
+		uint? pseudo = l4_pseudo_sum(payload, plan, TCP_PROTOCOL, (uint)tcp_len);
+		if (catch pseudo) {
+			push_fixup_error(&errors, &has_errors, "TCP checksum requires IPv4 or IPv6 header");
+		}
+		else if (tcp.checksum == FixupMode.SOFTWARE) {
+			write_u16(payload, tcp.offset + 16, internet_checksum(pseudo + checksum_sum(payload[tcp.offset : tcp_len])));
+		}
+		else if (tcp.checksum == FixupMode.HARDWARE_OFFLOAD) {
+			write_u16(payload, tcp.offset + 16, fold_checksum(pseudo));
+		}
+	}
+	if (plan.icmp.has_value && plan.icmp.value.checksum != FixupMode.DISABLED) {
+		IcmpFixup icmp = plan.icmp.value;
+		write_u16(payload, icmp.offset + 2, 0);
+		write_u16(payload, icmp.offset + 2,
+			internet_checksum(checksum_sum(payload[icmp.offset : plan.packet_len - icmp.offset])));
+	}
+
+	if (has_errors) {
+		result.errors = errors.to_tarray();
+		return result;
+	}
+
+	result.ok = true;
+	return result;
+}
+
 <* @param [&in] registry : `read-only protocol definitions` *>
 fn FixupResult fixup_packet(PacketConstructor packet, Registry* registry, char[] buffer, usz packet_len, FixupOptions options = {}) {
 	FixupPlanResult plan = plan_packet_fixups(packet, registry, buffer, packet_len, options);

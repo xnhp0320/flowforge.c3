@@ -154,6 +154,21 @@ fn bool PacketGenerator.apply_flow_checksums_only(&self, GeneratedPacket* packet
 	return fixed.ok;
 }
 
+<* Unchecked DPDK live Tx hot-path variant. The runtime validates flow indexes
+   and payload sizing once before workers are launched. *>
+fn bool PacketGenerator.apply_flow_checksums_only_unchecked(&self, GeneratedPacket* packet, ulong flow_index, char[] payload, List{String}* errors) {
+	if (packet.modifiers.len == 0) return true;
+
+	char[] packet_payload = payload[:packet.packet_len];
+	if (!apply_flow_index(packet_payload, packet.modifiers, flow_index, errors)) {
+		return false;
+	}
+
+	FixupResult fixed = serializer::apply_checksum_fixup_plan_unchecked(packet_payload, packet.fixup_plan);
+	foreach (e : fixed.errors) errors.push(e);
+	return fixed.ok;
+}
+
 fn bool PacketGenerator.serialize_generated(&self, PacketConstructor packet, FixupOptions fixup_options, GeneratedPacket* out, List{String}* errors, Allocator alloc) {
 	char[GENERATOR_MAX_PACKET_SIZE] scratch;
 

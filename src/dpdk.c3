@@ -101,6 +101,7 @@ const ulong TX_OUTER_IP_CKSUM = 1ul << 58;
 const ulong TX_OUTER_IPV4 = 1ul << 59;
 
 // DPDK defaults from rte_mbuf_core.h / rte_config.h and rte_launch.h.
+const uint MBUF_DEFAULT_DATAROOM = 2048;
 const uint MBUF_DEFAULT_BUF_SIZE = 2176; // 2048 dataroom + 128 headroom
 const uint LCORE_WAIT_STATE = 0;
 

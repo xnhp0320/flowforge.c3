@@ -352,7 +352,7 @@ fn bool prepare_batch_packet(WorkerContext* context, Mbuf* mbuf, ulong flow_inde
 	mbuf.reset_offload();
 
 	char[] payload = packet_data[:context.packet.packet_len];
-	if (!context.generator.apply_flow_checksums_only(context.packet, flow_index, payload, &context.errors)) {
+	if (!context.generator.apply_flow_checksums_only_unchecked(context.packet, flow_index, payload, &context.errors)) {
 		return false;
 	}
 
@@ -1017,6 +1017,12 @@ fn Result Runtime.run(&self, Program program, String eal_program_name, RunOption
 	result.planned_transmissions = checked_total_transmission_count(result.planned_packets, result.pmd_threads, options, &result);
 	errors.clear();
 	append_strings(&errors, result.errors);
+	if (generated.packet.base_payload.len != generated.packet.packet_len) {
+		errors.push("base payload length does not match packet length");
+	}
+	if (generated.packet.packet_len > (usz)dpdk::MBUF_DEFAULT_DATAROOM) {
+		errors.push(string::tformat("packet length %d does not fit in a DPDK mbuf", generated.packet.packet_len));
+	}
 	if (errors.len()) {
 		result.warnings = warnings.to_tarray();
 		result.errors = errors.to_tarray();
