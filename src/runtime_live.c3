@@ -925,79 +925,58 @@ fn void capture_rx_workers(ulong rx_threads, List{String}* errors, Result* resul
 <* Initialises the EAL for a checked program (mirrors C++ Runtime::init). *>
 fn Result Runtime.init(&self, Program program, String eal_program_name) {
 	Result result;
+	result.tinit();
 	result.clone_count = 1;
 
 	Config? config_opt = build_config(program, &result, default_run_options());
 	if (catch config_opt) return result;
 	Config config = config_opt;
 
-	List{String} warnings;
-	warnings.tinit();
-	append_strings(&warnings, result.warnings);
-	List{String} errors;
-	errors.tinit();
-	append_strings(&errors, result.errors);
-
 	if (config.has_packet) {
 		Checker checker = { .registry = self.registry };
 		CheckResult check = checker.check(config.packet);
-		append_strings(&warnings, check.warnings);
-		append_strings(&errors, check.errors);
+		append_strings(&result.warnings, check.warnings);
+		append_strings(&result.errors, check.errors);
 		if (!check.ok) {
-			result.warnings = warnings.to_tarray();
-			result.errors = errors.to_tarray();
 			return result;
 		}
 	}
 
-	if (init_eal(config.dpdk_args, eal_program_name, &result, &errors) < 0) {
-		result.warnings = warnings.to_tarray();
-		result.errors = errors.to_tarray();
+	if (init_eal(config.dpdk_args, eal_program_name, &result, &result.errors) < 0) {
 		result.ok = false;
 		return result;
 	}
 
-	result.warnings = warnings.to_tarray();
-	result.errors = errors.to_tarray();
-	result.ok = errors.len() == 0;
+	result.ok = result.errors.len() == 0;
 	return result;
 }
 
 <* Runs the live DPDK pipeline (TX or capture), mirroring C++ Runtime::run. *>
 fn Result Runtime.run(&self, Program program, String eal_program_name, RunOptions options = default_run_options()) {
 	Result result;
+	result.tinit();
 	result.clone_count = 1;
 
 	Config? config_opt = build_config(program, &result, options);
 	if (catch config_opt) return result;
 	Config config = config_opt;
 
-	List{String} warnings;
-	warnings.tinit();
-	append_strings(&warnings, result.warnings);
-	List{String} errors;
-	errors.tinit();
-	append_strings(&errors, result.errors);
 	List{WorkerResult} workers;
 	workers.tinit();
 	List{WorkerResult} rx_workers;
 	rx_workers.tinit();
 
 	if (options.capture) {
-		run_capture(config, eal_program_name, options, &result, &warnings, &errors, &rx_workers);
+		run_capture(config, eal_program_name, options, &result, &rx_workers);
 		result.rx_workers = rx_workers.to_tarray();
-		result.warnings = warnings.to_tarray();
-		result.errors = errors.to_tarray();
 		return result;
 	}
 
 	PacketGenerator generator = { .registry = self.registry };
 	PacketGenerationResult generated = generator.prepare(config.packet, config.packet_count, live_fixup_options(), mem);
-	append_strings(&warnings, generated.warnings);
-	append_strings(&errors, generated.errors);
+	append_strings(&result.warnings, generated.warnings);
+	append_strings(&result.errors, generated.errors);
 	if (!generated.ok || !generated.has_packet) {
-		result.warnings = warnings.to_tarray();
-		result.errors = errors.to_tarray();
 		return result;
 	}
 	defer generated.packet.free();
@@ -1013,32 +992,23 @@ fn Result Runtime.run(&self, Program program, String eal_program_name, RunOption
 	result.split = options.split;
 	result.once = options.once;
 
-	result.errors = errors.to_tarray();
 	result.planned_transmissions = checked_total_transmission_count(result.planned_packets, result.pmd_threads, options, &result);
-	errors.clear();
-	append_strings(&errors, result.errors);
 	if (generated.packet.base_payload.len != generated.packet.packet_len) {
-		errors.push("base payload length does not match packet length");
+		result.errors.push("base payload length does not match packet length");
 	}
 	if (generated.packet.packet_len > (usz)dpdk::MBUF_DEFAULT_DATAROOM) {
-		errors.push(string::tformat("packet length %d does not fit in a DPDK mbuf", generated.packet.packet_len));
+		result.errors.push(string::tformat("packet length %d does not fit in a DPDK mbuf", generated.packet.packet_len));
 	}
-	if (errors.len()) {
-		result.warnings = warnings.to_tarray();
-		result.errors = errors.to_tarray();
+	if (result.errors.len()) {
 		return result;
 	}
 
-	if (!check_tap_permission(&errors)) {
-		result.warnings = warnings.to_tarray();
-		result.errors = errors.to_tarray();
+	if (!check_tap_permission(&result.errors)) {
 		result.ok = false;
 		return result;
 	}
 
-	if (init_eal(config.dpdk_args, eal_program_name, &result, &errors) < 0) {
-		result.warnings = warnings.to_tarray();
-		result.errors = errors.to_tarray();
+	if (init_eal(config.dpdk_args, eal_program_name, &result, &result.errors) < 0) {
 		result.ok = false;
 		return result;
 	}
@@ -1052,11 +1022,11 @@ fn Result Runtime.run(&self, Program program, String eal_program_name, RunOption
 	install_signal_handlers();
 
 	bool port_started = false;
-	Mempool* pool = make_mbuf_pool(&generated.packet, tx_threads, batch_size, &errors);
-	if (pool != null && probe_tap_port(&errors) &&
-		configure_and_start_port(RUNTIME_PORT_ID, rx_queue_count, tx_queue_count, pool, &errors, &result)) {
+	Mempool* pool = make_mbuf_pool(&generated.packet, tx_threads, batch_size, &result.errors);
+	if (pool != null && probe_tap_port(&result.errors) &&
+		configure_and_start_port(RUNTIME_PORT_ID, rx_queue_count, tx_queue_count, pool, &result.errors, &result)) {
 		port_started = true;
-		run_traffic(RUNTIME_PORT_ID, pool, &generator, &generated.packet, batch_size, tx_threads, rx_threads, options, &errors, &result, &workers, &rx_workers);
+		run_traffic(RUNTIME_PORT_ID, pool, &generator, &generated.packet, batch_size, tx_threads, rx_threads, options, &result.errors, &result, &workers, &rx_workers);
 	}
 
 	if (port_started) {
@@ -1065,30 +1035,28 @@ fn Result Runtime.run(&self, Program program, String eal_program_name, RunOption
 			result.rx_missed = stats.imissed;
 			result.rx_errors = stats.ierrors;
 		}
-		stop_and_close_port(RUNTIME_PORT_ID, &warnings);
+		stop_and_close_port(RUNTIME_PORT_ID, &result.warnings);
 	}
 
 	if (pool != null) dpdk::rte_mempool_free(pool);
-	cleanup_eal(&warnings);
+	cleanup_eal(&result.warnings);
 
 	result.workers = workers.to_tarray();
 	result.rx_workers = rx_workers.to_tarray();
-	result.warnings = warnings.to_tarray();
-	result.errors = errors.to_tarray();
-	result.ok = errors.len() == 0;
+	result.ok = result.errors.len() == 0;
 	return result;
 }
 
-fn void run_capture(Config config, String eal_program_name, RunOptions options, Result* result, List{String}* warnings, List{String}* errors, List{WorkerResult}* rx_workers) @private {
+fn void run_capture(Config config, String eal_program_name, RunOptions options, Result* result, List{WorkerResult}* rx_workers) @private {
 	result.pmd_threads = config.pmd_threads.has_value ? config.pmd_threads.value : 1;
 	result.rx_threads = config.rx_threads.has_value ? config.rx_threads.value : 0;
 	result.tx_batch_size = config.tx_batch_size;
 
-	if (!check_tap_permission(errors)) {
+	if (!check_tap_permission(&result.errors)) {
 		result.ok = false;
 		return;
 	}
-	if (init_eal(config.dpdk_args, eal_program_name, result, errors) < 0) {
+	if (init_eal(config.dpdk_args, eal_program_name, result, &result.errors) < 0) {
 		result.ok = false;
 		return;
 	}
@@ -1104,8 +1072,8 @@ fn void run_capture(Config config, String eal_program_name, RunOptions options, 
 		(ushort)dpdk::MBUF_DEFAULT_BUF_SIZE,
 		(int)dpdk::rte_socket_id());
 	if (pool == null) {
-		errors.push(string::tformat("rte_pktmbuf_pool_create failed: %s", dpdk::strerror(dpdk::ff_rte_errno())));
-		cleanup_eal(warnings);
+		result.errors.push(string::tformat("rte_pktmbuf_pool_create failed: %s", dpdk::strerror(dpdk::ff_rte_errno())));
+		cleanup_eal(&result.warnings);
 		result.ok = false;
 		return;
 	}
@@ -1116,9 +1084,9 @@ fn void run_capture(Config config, String eal_program_name, RunOptions options, 
 	if (options.capture_file.has_value) {
 		File? opened = file::open(options.capture_file.value, "wb");
 		if (catch opened) {
-			errors.push(string::tformat("failed to open capture file '%s'", options.capture_file.value));
+			result.errors.push(string::tformat("failed to open capture file '%s'", options.capture_file.value));
 			dpdk::rte_mempool_free(pool);
-			cleanup_eal(warnings);
+			cleanup_eal(&result.warnings);
 			result.ok = false;
 			return;
 		}
@@ -1127,10 +1095,10 @@ fn void run_capture(Config config, String eal_program_name, RunOptions options, 
 		writer = { .output = &out };
 		PcapWriteResult header = writer.write_header();
 		if (!header.ok) {
-			foreach (e : header.errors) errors.push(e);
+			foreach (e : header.errors) result.errors.push(e);
 			(void)out.close();
 			dpdk::rte_mempool_free(pool);
-			cleanup_eal(warnings);
+			cleanup_eal(&result.warnings);
 			result.ok = false;
 			return;
 		}
@@ -1140,8 +1108,8 @@ fn void run_capture(Config config, String eal_program_name, RunOptions options, 
 	ushort rx_queue_count = rx_threads > 0 ? (ushort)rx_threads : 1;
 	bool port_started = false;
 
-	if (probe_tap_port(errors) &&
-		configure_and_start_port(RUNTIME_PORT_ID, rx_queue_count, tx_queue_count, pool, errors, result)) {
+	if (probe_tap_port(&result.errors) &&
+		configure_and_start_port(RUNTIME_PORT_ID, rx_queue_count, tx_queue_count, pool, &result.errors, result)) {
 		port_started = true;
 
 		if (have_file) {
@@ -1157,7 +1125,7 @@ fn void run_capture(Config config, String eal_program_name, RunOptions options, 
 					uint len = mbufs[i].pkt_len;
 					PcapWriteResult record = writer.write_packet(data[:len]);
 					if (!record.ok) {
-						foreach (e : record.errors) errors.push(e);
+						foreach (e : record.errors) result.errors.push(e);
 						write_error = true;
 						break;
 					}
@@ -1183,7 +1151,7 @@ fn void run_capture(Config config, String eal_program_name, RunOptions options, 
 			result.rx_bytes += context.rx_bytes;
 			rx_workers.push(make_rx_worker_result(&context));
 		} else {
-			capture_rx_workers(rx_threads, errors, result, rx_workers);
+			capture_rx_workers(rx_threads, &result.errors, result, rx_workers);
 		}
 	}
 
@@ -1193,11 +1161,11 @@ fn void run_capture(Config config, String eal_program_name, RunOptions options, 
 			result.rx_missed = stats.imissed;
 			result.rx_errors = stats.ierrors;
 		}
-		stop_and_close_port(RUNTIME_PORT_ID, warnings);
+		stop_and_close_port(RUNTIME_PORT_ID, &result.warnings);
 	}
 
 	if (have_file) (void)out.close();
 	dpdk::rte_mempool_free(pool);
-	cleanup_eal(warnings);
-	result.ok = errors.len() == 0;
+	cleanup_eal(&result.warnings);
+	result.ok = result.errors.len() == 0;
 }

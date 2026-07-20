@@ -20,7 +20,7 @@ fn void test_valid_mandatory_variables() @test {
 	Runtime rt = runtime::runtime_with_default();
 	Result result = rt.check(program);
 	assert(result.ok);
-	assert(result.errors.len == 0);
+	assert(result.errors.len() == 0);
 	assert(result.total_flows == 1);
 	assert(result.planned_packets == 1);
 }
@@ -30,7 +30,7 @@ fn void test_valid_tap_runtime_program() @test {
 	Runtime rt = runtime::runtime_with_default();
 	Result result = rt.check(program);
 	assert(result.ok);
-	assert(result.errors.len == 0);
+	assert(result.errors.len() == 0);
 	assert(result.total_flows == 3);
 	assert(result.planned_packets == 3);
 }
@@ -178,7 +178,7 @@ fn void test_clone_count_must_be_positive() @test {
 	options.clone_count = 0;
 	Result result = rt.check(program, options);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 	assert(result.errors[0] == "clone count must be positive");
 }
 
@@ -200,7 +200,7 @@ fn void test_pmd_threads_must_be_positive() @test {
 	Runtime rt = runtime::runtime_with_default();
 	Result result = rt.check(program);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 	assert(result.errors[0] == "variable 'PMD_THREADS' must be positive");
 }
 
@@ -210,7 +210,7 @@ fn void test_tx_batch_size_must_be_positive() @test {
 	Runtime rt = runtime::runtime_with_default();
 	Result result = rt.check(program);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 	assert(result.errors[0] == "variable 'TX_BATCH_SIZE' must be positive");
 }
 
@@ -220,7 +220,7 @@ fn void test_tx_batch_size_is_capped() @test {
 	Runtime rt = runtime::runtime_with_default();
 	Result result = rt.check(program);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 	assert(result.errors[0] == "variable 'TX_BATCH_SIZE' must be <= 256");
 }
 
@@ -230,7 +230,7 @@ fn void test_packet_count_must_be_integer() @test {
 	Runtime rt = runtime::runtime_with_default();
 	Result result = rt.check(program);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 	assert(result.errors[0] == "variable 'PACKET_COUNT' must be an integer expression");
 }
 
@@ -240,7 +240,7 @@ fn void test_packet_count_must_be_positive() @test {
 	Runtime rt = runtime::runtime_with_default();
 	Result result = rt.check(program);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 	assert(result.errors[0] == "variable 'PACKET_COUNT' must be positive");
 }
 
@@ -256,7 +256,7 @@ fn void test_rejects_range_expansion_overflow() @test {
 	Runtime rt = runtime::runtime_with_registry(&reg);
 	Result result = rt.check(program);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 	assert(result.errors[0] == "range expansion has more than 18446744073709551615 flows");
 }
 
@@ -265,7 +265,7 @@ fn void test_missing_packet() @test {
 	Runtime rt = runtime::runtime_with_default();
 	Result result = rt.check(program);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 	assert(result.errors[0] == "missing mandatory variable 'PACKET'");
 }
 
@@ -274,7 +274,7 @@ fn void test_dpdk_args_must_be_string() @test {
 	Runtime rt = runtime::runtime_with_default();
 	Result result = rt.check(program);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 	assert(result.errors[0] == "variable 'DPDK_ARGS' must be a string expression");
 }
 
@@ -284,7 +284,7 @@ fn void test_packet_must_be_packet() @test {
 	Runtime rt = runtime::runtime_with_default();
 	Result result = rt.check(program);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 	assert(result.errors[0] == "variable 'PACKET' must be a packet expression");
 }
 
@@ -294,7 +294,7 @@ fn void test_packet_checker_errors_block_runtime() @test {
 	Runtime rt = runtime::runtime_with_default();
 	Result result = rt.check(program);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 	assert(result.errors[0] == "unknown header: 'BadHeader'");
 }
 
@@ -313,7 +313,7 @@ fn void test_rx_threads_must_be_positive() @test {
 	Runtime rt = runtime::runtime_with_default();
 	Result result = rt.check(program);
 	assert(!result.ok);
-	assert(result.errors.len == 1);
+	assert(result.errors.len() == 1);
 	assert(result.errors[0] == "variable 'RX_THREADS' must be positive");
 }
 

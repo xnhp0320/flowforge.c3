@@ -39,8 +39,8 @@ struct RunOptions {
 
 struct Result {
 	bool ok;
-	String[] warnings;
-	String[] errors;
+	List{String} warnings;
+	List{String} errors;
 	int eal_parsed_args;
 	ushort port_id;
 	usz packet_len;
@@ -62,6 +62,11 @@ struct Result {
 	bool once;
 	WorkerResult[] workers;
 	WorkerResult[] rx_workers;
+}
+
+fn void Result.tinit(&self) {
+	self.warnings.tinit();
+	self.errors.tinit();
 }
 
 struct Config {
@@ -167,16 +172,11 @@ fn ulong? positive_integer_var(Variable* variable, String name, List{String}* er
 }
 
 fn Config? build_config(Program program, Result* result, RunOptions options) {
-	List{String} warnings;
-	warnings.tinit();
-	List{String} errors;
-	errors.tinit();
-
 	HashMap{String, Variable*} variables;
 	variables.tinit();
 	foreach (&variable : program.variables) {
 		if (variables.has_key(variable.name)) {
-			errors.push(string::tformat("duplicate variable '%s'", variable.name));
+			result.errors.push(string::tformat("duplicate variable '%s'", variable.name));
 			continue;
 		}
 		variables.set(variable.name, variable);
@@ -186,28 +186,24 @@ fn Config? build_config(Program program, Result* result, RunOptions options) {
 	bool has_packet_var = true;
 	if (catch packet_var) has_packet_var = false;
 	if (!has_packet_var && !options.capture) {
-		errors.push("missing mandatory variable 'PACKET'");
+		result.errors.push("missing mandatory variable 'PACKET'");
 	}
 
 	Variable*? dpdk_args_var = variables.get("DPDK_ARGS");
 	if (catch dpdk_args_var) {
-		errors.push("missing mandatory variable 'DPDK_ARGS'");
+		result.errors.push("missing mandatory variable 'DPDK_ARGS'");
 	}
 
-	if (errors.len()) {
-		result.warnings = warnings.to_tarray();
-		result.errors = errors.to_tarray();
-		return BUILD_ERR~;
-	}
+	if (result.errors.len()) return BUILD_ERR~;
 
 	Config config = { .tx_batch_size = 32 };
 
 	if (has_packet_var) {
 		ScalarValue? packet_value = ast::evaluate(packet_var.expression);
 		if (catch packet_value) {
-			errors.push("variable 'PACKET' must be a packet expression");
+			result.errors.push("variable 'PACKET' must be a packet expression");
 		} else if (packet_value.kind != ScalarKind.PACKET) {
-			errors.push("variable 'PACKET' must be a packet expression");
+			result.errors.push("variable 'PACKET' must be a packet expression");
 		} else {
 			config.has_packet = true;
 			config.packet = packet_value.packet_val;
@@ -216,14 +212,14 @@ fn Config? build_config(Program program, Result* result, RunOptions options) {
 
 	ScalarValue? dpdk_args_value = ast::evaluate(dpdk_args_var.expression);
 	if (catch dpdk_args_value) {
-		errors.push("variable 'DPDK_ARGS' must be a string expression");
+		result.errors.push("variable 'DPDK_ARGS' must be a string expression");
 	} else if (dpdk_args_value.kind != ScalarKind.STRING) {
-		errors.push("variable 'DPDK_ARGS' must be a string expression");
+		result.errors.push("variable 'DPDK_ARGS' must be a string expression");
 	} else {
 		String split_error = "";
 		String[]? args = split_dpdk_args(dpdk_args_value.string_val, &split_error);
 		if (catch args) {
-			errors.push(split_error);
+			result.errors.push(split_error);
 		} else {
 			config.dpdk_args = args;
 		}
@@ -231,16 +227,16 @@ fn Config? build_config(Program program, Result* result, RunOptions options) {
 
 	Variable*? packet_count_var = variables.get("PACKET_COUNT");
 	if (try packet_count_var) {
-		ulong? count = positive_integer_var(packet_count_var, "PACKET_COUNT", &errors);
+		ulong? count = positive_integer_var(packet_count_var, "PACKET_COUNT", &result.errors);
 		if (try count) config.packet_count.set(count);
 	}
 
 	Variable*? pmd_threads_var = variables.get("PMD_THREADS");
 	if (try pmd_threads_var) {
-		ulong? threads = positive_integer_var(pmd_threads_var, "PMD_THREADS", &errors);
+		ulong? threads = positive_integer_var(pmd_threads_var, "PMD_THREADS", &result.errors);
 		if (try threads) {
 			if (threads > USHORT_MAX) {
-				errors.push("variable 'PMD_THREADS' exceeds the supported Tx queue count");
+				result.errors.push("variable 'PMD_THREADS' exceeds the supported Tx queue count");
 			} else {
 				config.pmd_threads.set(threads);
 			}
@@ -249,10 +245,10 @@ fn Config? build_config(Program program, Result* result, RunOptions options) {
 
 	Variable*? rx_threads_var = variables.get("RX_THREADS");
 	if (try rx_threads_var) {
-		ulong? threads = positive_integer_var(rx_threads_var, "RX_THREADS", &errors);
+		ulong? threads = positive_integer_var(rx_threads_var, "RX_THREADS", &result.errors);
 		if (try threads) {
 			if (threads > USHORT_MAX) {
-				errors.push("variable 'RX_THREADS' exceeds the supported Rx queue count");
+				result.errors.push("variable 'RX_THREADS' exceeds the supported Rx queue count");
 			} else {
 				config.rx_threads.set(threads);
 			}
@@ -261,10 +257,10 @@ fn Config? build_config(Program program, Result* result, RunOptions options) {
 
 	Variable*? tx_batch_var = variables.get("TX_BATCH_SIZE");
 	if (try tx_batch_var) {
-		ulong? batch = positive_integer_var(tx_batch_var, "TX_BATCH_SIZE", &errors);
+		ulong? batch = positive_integer_var(tx_batch_var, "TX_BATCH_SIZE", &result.errors);
 		if (try batch) {
 			if (batch > RUNTIME_MAX_TX_BATCH_SIZE) {
-				errors.push(string::tformat("variable 'TX_BATCH_SIZE' must be <= %d", RUNTIME_MAX_TX_BATCH_SIZE));
+				result.errors.push(string::tformat("variable 'TX_BATCH_SIZE' must be <= %d", RUNTIME_MAX_TX_BATCH_SIZE));
 			} else {
 				config.tx_batch_size = batch;
 			}
@@ -275,32 +271,21 @@ fn Config? build_config(Program program, Result* result, RunOptions options) {
 		if (variable.name != "PACKET" && variable.name != "DPDK_ARGS" &&
 			variable.name != "PACKET_COUNT" && variable.name != "PMD_THREADS" &&
 			variable.name != "RX_THREADS" && variable.name != "TX_BATCH_SIZE") {
-			warnings.push(string::tformat("unknown runtime variable '%s'", variable.name));
+			result.warnings.push(string::tformat("unknown runtime variable '%s'", variable.name));
 		}
 	}
 
-	result.warnings = warnings.to_tarray();
-	result.errors = errors.to_tarray();
-	if (errors.len()) return BUILD_ERR~;
+	if (result.errors.len()) return BUILD_ERR~;
 	return config;
 }
 
 fn ulong checked_transmission_count(ulong flow_count, ulong clone_count, Result* result) {
 	if (clone_count == 0) {
-		// append via rebuild of errors list is awkward; push into a temp
-		List{String} errors;
-		errors.tinit();
-		foreach (e : result.errors) errors.push(e);
-		errors.push("clone count must be positive");
-		result.errors = errors.to_tarray();
+		result.errors.push("clone count must be positive");
 		return 0;
 	}
 	if (flow_count > ULONG_MAX / clone_count) {
-		List{String} errors;
-		errors.tinit();
-		foreach (e : result.errors) errors.push(e);
-		errors.push("clone expansion has more than 18446744073709551615 packets");
-		result.errors = errors.to_tarray();
+		result.errors.push("clone expansion has more than 18446744073709551615 packets");
 		return 0;
 	}
 	return flow_count * clone_count;
@@ -308,14 +293,10 @@ fn ulong checked_transmission_count(ulong flow_count, ulong clone_count, Result*
 
 fn ulong checked_total_transmission_count(ulong planned_flows, ulong worker_count, RunOptions options, Result* result) {
 	ulong per_worker = checked_transmission_count(planned_flows, options.clone_count, result);
-	if (result.errors.len) return 0;
+	if (result.errors.len()) return 0;
 	if (options.split) return per_worker;
 	if (per_worker > ULONG_MAX / worker_count) {
-		List{String} errors;
-		errors.tinit();
-		foreach (e : result.errors) errors.push(e);
-		errors.push("worker expansion has more than 18446744073709551615 packets");
-		result.errors = errors.to_tarray();
+		result.errors.push("worker expansion has more than 18446744073709551615 packets");
 		return 0;
 	}
 	return per_worker * worker_count;
@@ -327,6 +308,7 @@ fn void append_strings(List{String}* dest, String[] src) {
 
 fn Result Runtime.check(&self, Program program, RunOptions options = default_run_options()) {
 	Result result;
+	result.tinit();
 	result.clone_count = 1;
 
 	Config? config = build_config(program, &result, options);
@@ -344,16 +326,8 @@ fn Result Runtime.check(&self, Program program, RunOptions options = default_run
 	generator::MaybeCount count = config.packet_count;
 	PacketGenerationResult generated = generator.prepare(config.packet, count, live_fixup_options());
 
-	List{String} warnings;
-	warnings.tinit();
-	append_strings(&warnings, result.warnings);
-	append_strings(&warnings, generated.warnings);
-	List{String} errors;
-	errors.tinit();
-	append_strings(&errors, result.errors);
-	append_strings(&errors, generated.errors);
-	result.warnings = warnings.to_tarray();
-	result.errors = errors.to_tarray();
+	append_strings(&result.warnings, generated.warnings);
+	append_strings(&result.errors, generated.errors);
 	if (!generated.ok || !generated.has_packet) return result;
 
 	result.packet_len = generated.packet.packet_len;
@@ -368,7 +342,7 @@ fn Result Runtime.check(&self, Program program, RunOptions options = default_run
 	result.once = options.once;
 	result.planned_transmissions = checked_total_transmission_count(
 		result.planned_packets, result.pmd_threads, options, &result);
-	if (result.errors.len) return result;
+	if (result.errors.len()) return result;
 	result.ok = true;
 	return result;
 }
