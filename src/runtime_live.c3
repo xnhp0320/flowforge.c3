@@ -447,6 +447,9 @@ fn int run_worker_impl(WorkerContext* context) @private {
 		for (ushort i = 0; i < count; i++) {
 			ulong local_transmission = global_transmission + i;
 			ulong flow_index = context.first_flow + (local_transmission / context.clone_count) % context.flow_count;
+			if ((short)i < (short)count - 1) {
+			    @prefetch(batch[i].mtod(), PrefetchLocality.FAR, true);
+			}
 			if (!prepare_batch_packet(context, batch[i], flow_index)) {
 				free_unsent(&batch[0], 0, count);
 				return 1;
