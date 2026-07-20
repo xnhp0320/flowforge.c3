@@ -31,6 +31,11 @@ fn ushort u16_at(char[] bytes, usz offset) {
 	return (ushort)(((ushort)byte_at(bytes, offset) << 8) | (ushort)byte_at(bytes, offset + 1));
 }
 
+fn void set_u16(char[] bytes, usz offset, ushort value) {
+	bytes[offset] = (char)(value >> 8);
+	bytes[offset + 1] = (char)(value & 0xff);
+}
+
 fn void test_serializes_ether_ip_udp_scalars() @test {
 	BuildResult built = build_default(
 		`Ether(dst="ff:ff:ff:ff:ff:ff",src="00:11:22:33:44:55",type=2048)/IP(src="192.168.0.1",dst="192.168.0.2",ttl=64,proto=17)/UDP(sport=53,dport=54)`);
@@ -311,6 +316,40 @@ fn void test_planned_hardware_fixup_reuses_offload_metadata_and_refreshes_pseudo
 	assert(fixup.offload.l2_len == 14);
 	assert(fixup.offload.l3_len == 20);
 	assert(fixup.offload.l4_len == 8);
+	assert(u16_at(buf[..], 24) == 0);
+	uint pseudo = serializer::ipv4_pseudo_sum(buf[..], 14, (char)17, (ushort)8);
+	assert(u16_at(buf[..], 40) == serializer::fold_checksum(pseudo));
+}
+
+fn void test_checksum_only_fixup_refreshes_seed_without_rewriting_lengths() @test {
+	BuildResult built = build_default(
+		`Ether(type=2048)/IP(src="[192.168.0.1-192.168.0.3]",dst="192.168.0.2",ttl=64,proto=17)/UDP(sport=53,dport=54)`);
+	assert(built.ok);
+	char[64] buf;
+	Registry reg = registry::create_default_registry();
+
+	SerializeResult serialize = serializer::serialize_packet(built.packet, &reg, buf[..]);
+	assert(serialize.ok);
+	FixupOptions options;
+	options.ipv4_checksum = FixupMode.HARDWARE_OFFLOAD;
+	options.udp_checksum = FixupMode.HARDWARE_OFFLOAD;
+	FixupPlanResult plan = serializer::plan_packet_fixups(built.packet, &reg, buf[..], serialize.packet_len, options);
+	assert(plan.ok);
+	PayloadFieldModifier* modifier = find_modifier(serialize, "IP", "src");
+	assert(modifier != null);
+
+	FixupResult initial = serializer::apply_fixup_plan(buf[..], plan.plan);
+	assert(initial.ok);
+	set_u16(buf[..], 16, 0xaaaa);
+	set_u16(buf[..], 38, 0xbbbb);
+
+	String error = "";
+	assert(modifier.apply(buf[..], 2, &error));
+	FixupResult fixup = serializer::apply_checksum_fixup_plan(buf[..], plan.plan);
+
+	assert(fixup.ok);
+	assert(u16_at(buf[..], 16) == 0xaaaa);
+	assert(u16_at(buf[..], 38) == 0xbbbb);
 	assert(u16_at(buf[..], 24) == 0);
 	uint pseudo = serializer::ipv4_pseudo_sum(buf[..], 14, (char)17, (ushort)8);
 	assert(u16_at(buf[..], 40) == serializer::fold_checksum(pseudo));

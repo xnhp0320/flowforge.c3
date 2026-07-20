@@ -130,6 +130,29 @@ fn bool PacketGenerator.apply_flow(&self, GeneratedPacket* packet, ulong flow_in
 	return fixed.ok;
 }
 
+<* Patches a payload that was copied from `GeneratedPacket.base_payload` and
+   refreshes only checksum fields. Length fields are assumed to already be
+   fixed in the seeded base payload. *>
+fn bool PacketGenerator.apply_flow_checksums_only(&self, GeneratedPacket* packet, ulong flow_index, char[] payload, List{String}* errors) {
+	if (flow_index >= packet.flow_plan.planned_packets) {
+		errors.push("flow index is outside the planned packet count");
+		return false;
+	}
+	if (payload.len < packet.packet_len) {
+		errors.push("payload buffer is smaller than the packet length");
+		return false;
+	}
+
+	char[] packet_payload = payload[:packet.packet_len];
+	if (!apply_flow_index(packet_payload, packet.modifiers, flow_index, errors)) {
+		return false;
+	}
+
+	FixupResult fixed = serializer::apply_checksum_fixup_plan(packet_payload, packet.fixup_plan);
+	foreach (e : fixed.errors) errors.push(e);
+	return fixed.ok;
+}
+
 fn bool PacketGenerator.serialize_generated(&self, PacketConstructor packet, FixupOptions fixup_options, GeneratedPacket* out, List{String}* errors, Allocator alloc) {
 	char[GENERATOR_MAX_PACKET_SIZE] scratch;
 

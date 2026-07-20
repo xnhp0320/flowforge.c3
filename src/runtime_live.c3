@@ -352,7 +352,7 @@ fn bool prepare_batch_packet(WorkerContext* context, Mbuf* mbuf, ulong flow_inde
 	mbuf.reset_offload();
 
 	char[] payload = packet_data[:context.packet.packet_len];
-	if (!context.generator.apply_flow(context.packet, flow_index, payload, &context.errors)) {
+	if (!context.generator.apply_flow_checksums_only(context.packet, flow_index, payload, &context.errors)) {
 		return false;
 	}
 

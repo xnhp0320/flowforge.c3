@@ -1036,6 +1036,18 @@ fn void push_fixup_error(List{String}* errors, bool* has_errors, String message)
 	errors.push(message);
 }
 
+faultdef PSEUDO_HEADER_MISSING;
+
+fn uint? l4_pseudo_sum(char[] payload, PacketFixupPlan plan, char protocol, uint l4_len) @private {
+	if (plan.ipv4.has_value) {
+		return ipv4_pseudo_sum(payload, plan.ipv4.value.offset, protocol, (ushort)l4_len);
+	}
+	if (plan.ipv6.has_value) {
+		return ipv6_pseudo_sum(payload, plan.ipv6.value.offset, protocol, l4_len);
+	}
+	return PSEUDO_HEADER_MISSING~;
+}
+
 fn FixupResult apply_fixup_plan(char[] buffer, PacketFixupPlan plan) {
 	FixupResult result;
 	result.offload = plan.offload;
@@ -1095,27 +1107,17 @@ fn FixupResult apply_fixup_plan(char[] buffer, PacketFixupPlan plan) {
 		if (udp.checksum != FixupMode.DISABLED) {
 			write_u16(payload, udp.offset + 6, 0);
 
-			uint pseudo_sum = 0;
-			bool has_pseudo_header = false;
-			if (plan.ipv4.has_value) {
-				pseudo_sum = ipv4_pseudo_sum(payload, plan.ipv4.value.offset, UDP_PROTOCOL, (ushort)udp_len);
-				has_pseudo_header = true;
-			}
-			else if (plan.ipv6.has_value) {
-				pseudo_sum = ipv6_pseudo_sum(payload, plan.ipv6.value.offset, UDP_PROTOCOL, (uint)udp_len);
-				has_pseudo_header = true;
-			}
-
-			if (!has_pseudo_header) {
+			uint? pseudo = l4_pseudo_sum(payload, plan, UDP_PROTOCOL, (uint)udp_len);
+			if (catch pseudo) {
 				push_fixup_error(&errors, &has_errors, "UDP checksum requires IPv4 or IPv6 header");
 			}
 			else if (udp.checksum == FixupMode.SOFTWARE) {
-				ushort checksum = internet_checksum(pseudo_sum + checksum_sum(payload[udp.offset : udp_len]));
+				ushort checksum = internet_checksum(pseudo + checksum_sum(payload[udp.offset : udp_len]));
 				if (checksum == 0) checksum = 0xffff;
 				write_u16(payload, udp.offset + 6, checksum);
 			}
 			else if (udp.checksum == FixupMode.HARDWARE_OFFLOAD) {
-				write_u16(payload, udp.offset + 6, fold_checksum(pseudo_sum));
+				write_u16(payload, udp.offset + 6, fold_checksum(pseudo));
 			}
 		}
 	}
@@ -1124,25 +1126,107 @@ fn FixupResult apply_fixup_plan(char[] buffer, PacketFixupPlan plan) {
 		write_u16(payload, tcp.offset + 16, 0);
 		usz tcp_len = plan.packet_len - tcp.offset;
 
-		uint pseudo_sum = 0;
-		bool has_pseudo_header = false;
-		if (plan.ipv4.has_value) {
-			pseudo_sum = ipv4_pseudo_sum(payload, plan.ipv4.value.offset, TCP_PROTOCOL, (ushort)tcp_len);
-			has_pseudo_header = true;
-		}
-		else if (plan.ipv6.has_value) {
-			pseudo_sum = ipv6_pseudo_sum(payload, plan.ipv6.value.offset, TCP_PROTOCOL, (uint)tcp_len);
-			has_pseudo_header = true;
-		}
-
-		if (!has_pseudo_header) {
+		uint? pseudo = l4_pseudo_sum(payload, plan, TCP_PROTOCOL, (uint)tcp_len);
+		if (catch pseudo) {
 			push_fixup_error(&errors, &has_errors, "TCP checksum requires IPv4 or IPv6 header");
 		}
 		else if (tcp.checksum == FixupMode.SOFTWARE) {
-			write_u16(payload, tcp.offset + 16, internet_checksum(pseudo_sum + checksum_sum(payload[tcp.offset : tcp_len])));
+			write_u16(payload, tcp.offset + 16, internet_checksum(pseudo + checksum_sum(payload[tcp.offset : tcp_len])));
 		}
 		else if (tcp.checksum == FixupMode.HARDWARE_OFFLOAD) {
-			write_u16(payload, tcp.offset + 16, fold_checksum(pseudo_sum));
+			write_u16(payload, tcp.offset + 16, fold_checksum(pseudo));
+		}
+	}
+	if (plan.icmp.has_value && plan.icmp.value.checksum != FixupMode.DISABLED) {
+		IcmpFixup icmp = plan.icmp.value;
+		write_u16(payload, icmp.offset + 2, 0);
+		write_u16(payload, icmp.offset + 2,
+			internet_checksum(checksum_sum(payload[icmp.offset : plan.packet_len - icmp.offset])));
+	}
+
+	if (has_errors) {
+		result.errors = errors.to_tarray();
+		return result;
+	}
+
+	result.ok = true;
+	return result;
+}
+
+<* Refreshes checksum fields only. Use this when the payload was copied from a
+   fully fixed-up base packet and only flow-varying fields were patched. This
+   deliberately does not rewrite IPv4/IPv6/UDP length fields. *>
+fn FixupResult apply_checksum_fixup_plan(char[] buffer, PacketFixupPlan plan) {
+	FixupResult result;
+	result.offload = plan.offload;
+	List{String} errors;
+	bool has_errors = false;
+
+	if (buffer.len < plan.packet_len) {
+		push_fixup_error(&errors, &has_errors, string::tformat("buffer has %d bytes but packet length is %d bytes", buffer.len, plan.packet_len));
+		result.errors = errors.to_tarray();
+		return result;
+	}
+
+	char[] payload = buffer[:plan.packet_len];
+
+	if (plan.outer_ipv4.has_value) {
+		Ipv4Fixup ipv4 = plan.outer_ipv4.value;
+		if (ipv4.checksum != FixupMode.DISABLED) {
+			write_u16(payload, ipv4.offset + 10, 0);
+			if (ipv4.checksum == FixupMode.SOFTWARE) {
+				write_u16(payload, ipv4.offset + 10, internet_checksum(checksum_sum(payload[ipv4.offset : ipv4.header_len])));
+			}
+		}
+	}
+	if (plan.outer_udp.has_value) {
+		write_u16(payload, plan.outer_udp.value.offset + 6, 0);
+	}
+
+	if (plan.ipv4.has_value) {
+		Ipv4Fixup ipv4 = plan.ipv4.value;
+		if (ipv4.checksum != FixupMode.DISABLED) {
+			write_u16(payload, ipv4.offset + 10, 0);
+			if (ipv4.checksum == FixupMode.SOFTWARE) {
+				write_u16(payload, ipv4.offset + 10, internet_checksum(checksum_sum(payload[ipv4.offset : ipv4.header_len])));
+			}
+		}
+	}
+
+	if (plan.udp.has_value) {
+		UdpFixup udp = plan.udp.value;
+		usz udp_len = plan.packet_len - udp.offset;
+		if (udp.checksum != FixupMode.DISABLED) {
+			write_u16(payload, udp.offset + 6, 0);
+
+			uint? pseudo = l4_pseudo_sum(payload, plan, UDP_PROTOCOL, (uint)udp_len);
+			if (catch pseudo) {
+				push_fixup_error(&errors, &has_errors, "UDP checksum requires IPv4 or IPv6 header");
+			}
+			else if (udp.checksum == FixupMode.SOFTWARE) {
+				ushort checksum = internet_checksum(pseudo + checksum_sum(payload[udp.offset : udp_len]));
+				if (checksum == 0) checksum = 0xffff;
+				write_u16(payload, udp.offset + 6, checksum);
+			}
+			else if (udp.checksum == FixupMode.HARDWARE_OFFLOAD) {
+				write_u16(payload, udp.offset + 6, fold_checksum(pseudo));
+			}
+		}
+	}
+	if (plan.tcp.has_value && plan.tcp.value.checksum != FixupMode.DISABLED) {
+		TcpFixup tcp = plan.tcp.value;
+		write_u16(payload, tcp.offset + 16, 0);
+		usz tcp_len = plan.packet_len - tcp.offset;
+
+		uint? pseudo = l4_pseudo_sum(payload, plan, TCP_PROTOCOL, (uint)tcp_len);
+		if (catch pseudo) {
+			push_fixup_error(&errors, &has_errors, "TCP checksum requires IPv4 or IPv6 header");
+		}
+		else if (tcp.checksum == FixupMode.SOFTWARE) {
+			write_u16(payload, tcp.offset + 16, internet_checksum(pseudo + checksum_sum(payload[tcp.offset : tcp_len])));
+		}
+		else if (tcp.checksum == FixupMode.HARDWARE_OFFLOAD) {
+			write_u16(payload, tcp.offset + 16, fold_checksum(pseudo));
 		}
 	}
 	if (plan.icmp.has_value && plan.icmp.value.checksum != FixupMode.DISABLED) {
