@@ -38,16 +38,6 @@ struct ff_eth_stats {
 	uint64_t rx_nombuf;
 };
 
-/* --- constants (exposed as functions to avoid macro-linkage issues) ------- */
-uint64_t ff_flag_tx_ipv4(void);
-uint64_t ff_flag_tx_ipv6(void);
-uint64_t ff_flag_tx_ip_cksum(void);
-uint64_t ff_flag_tx_tcp_cksum(void);
-uint64_t ff_flag_tx_udp_cksum(void);
-uint64_t ff_flag_tx_l4_mask(void);
-uint32_t ff_mbuf_default_buf_size(void);
-unsigned ff_lcore_wait_state(void);
-
 /* --- mbuf layout guard ---------------------------------------------------
  * The C3 side mirrors struct rte_mbuf directly for field access; this reports
  * the real offsets/size so a unit test can assert the mirror stays in sync.
@@ -68,17 +58,6 @@ uint16_t ff_eth_rx_burst(uint16_t port_id, uint16_t queue_id, struct rte_mbuf **
 /* rte_eth_dev_configure with a zero-initialised rte_eth_conf. */
 int ff_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q);
 int ff_eth_stats_get(uint16_t port_id, struct ff_eth_stats *out);
-
-/* Applies a checksum offload request to an mbuf (mirrors
- * apply_dpdk_offload_request in the C++ reference). */
-void ff_apply_dpdk_offload(struct rte_mbuf *mbuf,
-	int layer3,
-	int ipv4_checksum,
-	int tcp_checksum,
-	int udp_checksum,
-	uint64_t l2_len,
-	uint64_t l3_len,
-	uint64_t l4_len);
 
 /* Enumerates the worker (non-main) lcores into `out` (capacity `max`);
  * returns the number of worker lcores available. */

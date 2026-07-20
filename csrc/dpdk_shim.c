@@ -22,40 +22,6 @@
 #include <unistd.h>
 #endif
 
-/* --- constants ----------------------------------------------------------- */
-
-uint64_t ff_flag_tx_ipv4(void) {
-	return RTE_MBUF_F_TX_IPV4;
-}
-
-uint64_t ff_flag_tx_ipv6(void) {
-	return RTE_MBUF_F_TX_IPV6;
-}
-
-uint64_t ff_flag_tx_ip_cksum(void) {
-	return RTE_MBUF_F_TX_IP_CKSUM;
-}
-
-uint64_t ff_flag_tx_tcp_cksum(void) {
-	return RTE_MBUF_F_TX_TCP_CKSUM;
-}
-
-uint64_t ff_flag_tx_udp_cksum(void) {
-	return RTE_MBUF_F_TX_UDP_CKSUM;
-}
-
-uint64_t ff_flag_tx_l4_mask(void) {
-	return RTE_MBUF_F_TX_L4_MASK;
-}
-
-uint32_t ff_mbuf_default_buf_size(void) {
-	return RTE_MBUF_DEFAULT_BUF_SIZE;
-}
-
-unsigned ff_lcore_wait_state(void) {
-	return (unsigned)WAIT;
-}
-
 /* --- mbuf layout guard --------------------------------------------------- */
 
 void ff_mbuf_layout(size_t *out) {
@@ -127,41 +93,6 @@ int ff_eth_stats_get(uint16_t port_id, struct ff_eth_stats *out) {
 		out->rx_nombuf = stats.rx_nombuf;
 	}
 	return rc;
-}
-
-/* --- offload ------------------------------------------------------------- */
-
-void ff_apply_dpdk_offload(struct rte_mbuf *mbuf,
-	int layer3,
-	int ipv4_checksum,
-	int tcp_checksum,
-	int udp_checksum,
-	uint64_t l2_len,
-	uint64_t l3_len,
-	uint64_t l4_len) {
-	const int needs_l3 = ipv4_checksum || tcp_checksum || udp_checksum;
-	if (!needs_l3) {
-		return;
-	}
-
-	mbuf->l2_len = l2_len;
-	mbuf->l3_len = l3_len;
-	mbuf->l4_len = l4_len;
-
-	if (layer3 == FF_OFFLOAD_L3_IPV4 || ipv4_checksum) {
-		mbuf->ol_flags |= RTE_MBUF_F_TX_IPV4;
-	} else if (layer3 == FF_OFFLOAD_L3_IPV6) {
-		mbuf->ol_flags |= RTE_MBUF_F_TX_IPV6;
-	}
-
-	if (ipv4_checksum) {
-		mbuf->ol_flags |= RTE_MBUF_F_TX_IP_CKSUM;
-	}
-
-	if (tcp_checksum || udp_checksum) {
-		mbuf->ol_flags &= ~RTE_MBUF_F_TX_L4_MASK;
-		mbuf->ol_flags |= tcp_checksum ? RTE_MBUF_F_TX_TCP_CKSUM : RTE_MBUF_F_TX_UDP_CKSUM;
-	}
 }
 
 /* --- lcore enumeration --------------------------------------------------- */

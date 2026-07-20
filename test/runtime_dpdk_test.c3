@@ -21,9 +21,9 @@ fn void test_applies_dpdk_offload_request_to_mbuf_metadata() @test {
 	runtime::apply_dpdk_offload(mbuf, request);
 
 	ulong ol_flags = mbuf.ol_flags;
-	assert((ol_flags & dpdk::ff_flag_tx_ipv4()) != 0);
-	assert((ol_flags & dpdk::ff_flag_tx_ip_cksum()) != 0);
-	assert((ol_flags & dpdk::ff_flag_tx_l4_mask()) == dpdk::ff_flag_tx_udp_cksum());
+	assert((ol_flags & dpdk::TX_IPV4) != 0);
+	assert((ol_flags & dpdk::TX_IP_CKSUM) != 0);
+	assert((ol_flags & dpdk::TX_L4_MASK) == dpdk::TX_UDP_CKSUM);
 	assert(mbuf.tx_offload.l2_len == 14);
 	assert(mbuf.tx_offload.l3_len == 20);
 	assert(mbuf.tx_offload.l4_len == 8);
@@ -44,10 +44,43 @@ fn void test_tcp_offload_sets_tcp_checksum_flag() @test {
 	runtime::apply_dpdk_offload(mbuf, request);
 
 	ulong ol_flags = mbuf.ol_flags;
-	assert((ol_flags & dpdk::ff_flag_tx_ipv6()) != 0);
-	assert((ol_flags & dpdk::ff_flag_tx_ip_cksum()) == 0);
-	assert((ol_flags & dpdk::ff_flag_tx_l4_mask()) == dpdk::ff_flag_tx_tcp_cksum());
+	assert((ol_flags & dpdk::TX_IPV6) != 0);
+	assert((ol_flags & dpdk::TX_IP_CKSUM) == 0);
+	assert((ol_flags & dpdk::TX_L4_MASK) == dpdk::TX_TCP_CKSUM);
 	assert(mbuf.tx_offload.l3_len == 40);
+	assert(mbuf.tx_offload.l4_len == 20);
+}
+
+fn void test_vxlan_offload_sets_tunnel_and_outer_metadata() @test {
+	Mbuf* mbuf = dpdk::ff_test_alloc_mbuf();
+	assert(mbuf != null);
+	defer dpdk::ff_test_free_mbuf(mbuf);
+
+	PacketOffloadRequest request;
+	request.layer3 = OffloadLayer3.IPV4;
+	request.tunnel_vxlan = true;
+	request.outer_ipv4_checksum = true;
+	request.ipv4_checksum = true;
+	request.tcp_checksum = true;
+	request.outer_l2_len = 14;
+	request.outer_l3_len = 20;
+	request.l2_len = 30;
+	request.l3_len = 20;
+	request.l4_len = 20;
+
+	runtime::apply_dpdk_offload(mbuf, request);
+
+	ulong ol_flags = mbuf.ol_flags;
+	assert((ol_flags & dpdk::TX_TUNNEL_MASK) == dpdk::TX_TUNNEL_VXLAN);
+	assert((ol_flags & dpdk::TX_OUTER_IPV4) != 0);
+	assert((ol_flags & dpdk::TX_OUTER_IP_CKSUM) != 0);
+	assert((ol_flags & dpdk::TX_IPV4) != 0);
+	assert((ol_flags & dpdk::TX_IP_CKSUM) != 0);
+	assert((ol_flags & dpdk::TX_L4_MASK) == dpdk::TX_TCP_CKSUM);
+	assert(mbuf.tx_offload.outer_l2_len == 14);
+	assert(mbuf.tx_offload.outer_l3_len == 20);
+	assert(mbuf.tx_offload.l2_len == 30);
+	assert(mbuf.tx_offload.l3_len == 20);
 	assert(mbuf.tx_offload.l4_len == 20);
 }
 

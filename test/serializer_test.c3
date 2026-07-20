@@ -404,3 +404,37 @@ fn void test_fixup_writes_outer_udp_length_alongside_inner_tcp() @test {
 	// Inner TCP checksum @100 is computed (non-zero).
 	assert(u16_at(buf[..], 100) != 0);
 }
+
+fn void test_vxlan_hardware_fixup_uses_tunnel_offload_and_zero_outer_udp_checksum() @test {
+	BuildResult built = build_default(
+		`Ether(dst="ff:ff:ff:ff:ff:ff",src="02:64:74:61:70:00")/IP(src="203.0.113.1",dst="203.0.113.2")/UDP()/VXLAN(vni=42)/Ether(dst="02:00:00:00:00:02",src="02:00:00:00:00:01")/IP(src="10.10.0.1",dst="10.10.0.2")/TCP(sport=2000,dport=2001,flags=2)`);
+	assert(built.ok);
+	char[128] buf;
+	Registry reg = registry::create_default_registry();
+	SerializeResult serialize = serializer::serialize_packet(built.packet, &reg, buf[..]);
+	assert(serialize.ok);
+
+	FixupOptions options;
+	options.ipv4_checksum = FixupMode.HARDWARE_OFFLOAD;
+	options.tcp_checksum = FixupMode.HARDWARE_OFFLOAD;
+	options.udp_checksum = FixupMode.HARDWARE_OFFLOAD;
+	FixupResult fixup = serializer::fixup_packet(built.packet, &reg, buf[..], serialize.packet_len, options);
+
+	assert(fixup.ok);
+	assert(fixup.offload.tunnel_vxlan);
+	assert(fixup.offload.outer_ipv4_checksum);
+	assert(fixup.offload.ipv4_checksum);
+	assert(fixup.offload.tcp_checksum);
+	assert(!fixup.offload.udp_checksum);
+	assert(fixup.offload.outer_l2_len == 14);
+	assert(fixup.offload.outer_l3_len == 20);
+	assert(fixup.offload.l2_len == 30);
+	assert(fixup.offload.l3_len == 20);
+	assert(fixup.offload.l4_len == 20);
+	assert(u16_at(buf[..], 16) == 90);
+	assert(u16_at(buf[..], 24) == 0);
+	assert(u16_at(buf[..], 38) == 70);
+	assert(u16_at(buf[..], 40) == 0);
+	assert(u16_at(buf[..], 74) == 0);
+	assert(u16_at(buf[..], 100) != 0);
+}

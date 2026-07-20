@@ -22,6 +22,8 @@ bitstruct TxOffload : ulong {
 	ulong l3_len    : 7..15;  // RTE_MBUF_L3_LEN_BITS = 9
 	ulong l4_len    : 16..23; // RTE_MBUF_L4_LEN_BITS = 8
 	ulong tso_segsz : 24..39; // RTE_MBUF_TSO_SEGSZ_BITS = 16
+	ulong outer_l3_len : 40..48; // RTE_MBUF_OUTL3_LEN_BITS = 9
+	ulong outer_l2_len : 49..55; // RTE_MBUF_OUTL2_LEN_BITS = 7
 }
 
 // C3 mirror of `struct rte_mbuf`. Only the offsets of the fields we access are
@@ -73,6 +75,8 @@ fn void Mbuf.reset_offload(&self) @inline {
 	self.tx_offload.l2_len = 0;
 	self.tx_offload.l3_len = 0;
 	self.tx_offload.l4_len = 0;
+	self.tx_offload.outer_l2_len = 0;
+	self.tx_offload.outer_l3_len = 0;
 }
 
 alias LcoreFunction = fn int(void* arg);
@@ -82,6 +86,23 @@ alias MempoolObjCb = fn void(Mempool* pool, void* opaque, void* obj, uint index)
 const int FF_OFFLOAD_L3_NONE = 0;
 const int FF_OFFLOAD_L3_IPV4 = 1;
 const int FF_OFFLOAD_L3_IPV6 = 2;
+
+// DPDK Tx offload flags. These are stable mbuf flag bit assignments from
+// rte_mbuf_core.h; keeping them here avoids shim calls on the per-packet path.
+const ulong TX_IPV4 = 1ul << 55;
+const ulong TX_IPV6 = 1ul << 56;
+const ulong TX_IP_CKSUM = 1ul << 54;
+const ulong TX_TCP_CKSUM = 1ul << 52;
+const ulong TX_UDP_CKSUM = 3ul << 52;
+const ulong TX_L4_MASK = 3ul << 52;
+const ulong TX_TUNNEL_VXLAN = 1ul << 45;
+const ulong TX_TUNNEL_MASK = 0xful << 45;
+const ulong TX_OUTER_IP_CKSUM = 1ul << 58;
+const ulong TX_OUTER_IPV4 = 1ul << 59;
+
+// DPDK defaults from rte_mbuf_core.h / rte_config.h and rte_launch.h.
+const uint MBUF_DEFAULT_BUF_SIZE = 2176; // 2048 dataroom + 128 headroom
+const uint LCORE_WAIT_STATE = 0;
 
 // Subset of rte_eth_stats read back by the runtime (matches struct ff_eth_stats).
 struct EthStats {
@@ -119,16 +140,6 @@ extern fn Mempool* rte_pktmbuf_pool_create(ZString name, uint n, uint cache_size
 extern fn void rte_mempool_free(Mempool* mp);
 extern fn uint rte_mempool_obj_iter(Mempool* mp, MempoolObjCb cb, void* arg);
 
-// --- shim: constants ------------------------------------------------------
-extern fn ulong ff_flag_tx_ipv4();
-extern fn ulong ff_flag_tx_ipv6();
-extern fn ulong ff_flag_tx_ip_cksum();
-extern fn ulong ff_flag_tx_tcp_cksum();
-extern fn ulong ff_flag_tx_udp_cksum();
-extern fn ulong ff_flag_tx_l4_mask();
-extern fn uint ff_mbuf_default_buf_size();
-extern fn uint ff_lcore_wait_state();
-
 // --- shim: mbuf layout guard ---------------------------------------------
 // Fills `out` with the real DPDK offsets/size so the C3 mirror above can be
 // verified against the compiled headers. Order:
@@ -149,8 +160,7 @@ extern fn ushort ff_eth_rx_burst(ushort port_id, ushort queue_id, Mbuf** rx_pkts
 extern fn int ff_eth_dev_configure(ushort port_id, ushort nb_rx_q, ushort nb_tx_q);
 extern fn int ff_eth_stats_get(ushort port_id, EthStats* out);
 
-// --- shim: offload / lcore enumeration / tap / test ----------------------
-extern fn void ff_apply_dpdk_offload(Mbuf* mbuf, int layer3, int ipv4_checksum, int tcp_checksum, int udp_checksum, ulong l2_len, ulong l3_len, ulong l4_len);
+// --- shim: lcore enumeration / tap / test --------------------------------
 extern fn uint ff_worker_lcores(uint* out, uint max);
 extern fn Mbuf* ff_test_alloc_mbuf();
 extern fn void ff_test_free_mbuf(Mbuf* mbuf);

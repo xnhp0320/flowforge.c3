@@ -153,17 +153,47 @@ struct SeedContext {
 
 // --- offload --------------------------------------------------------------
 
-<* Applies a hardware-checksum offload request to an mbuf (wraps the shim,
-   mirroring apply_dpdk_offload_request in the C++ reference). *>
+<* Applies a hardware-checksum offload request directly to an mbuf. DPDK flag
+   values are compile-time constants so the per-packet path stays in C3. *>
 fn void apply_dpdk_offload(Mbuf* mbuf, PacketOffloadRequest request) {
-	dpdk::ff_apply_dpdk_offload(mbuf,
-		(int)request.layer3.ordinal,
-		request.ipv4_checksum ? 1 : 0,
-		request.tcp_checksum ? 1 : 0,
-		request.udp_checksum ? 1 : 0,
-		(ulong)request.l2_len,
-		(ulong)request.l3_len,
-		(ulong)request.l4_len);
+	assert(request.l2_len <= ushort::max && request.l3_len <= ushort::max &&
+		request.l4_len <= ushort::max && request.outer_l2_len <= ushort::max &&
+		request.outer_l3_len <= ushort::max, "DPDK offload lengths must fit in uint16_t");
+
+	bool needs_l3 = request.ipv4_checksum || request.outer_ipv4_checksum ||
+		request.tcp_checksum || request.udp_checksum || request.tunnel_vxlan;
+	if (!needs_l3) return;
+
+	mbuf.tx_offload.l2_len = request.l2_len;
+	mbuf.tx_offload.l3_len = request.l3_len;
+	mbuf.tx_offload.l4_len = request.l4_len;
+	mbuf.tx_offload.outer_l2_len = request.outer_l2_len;
+	mbuf.tx_offload.outer_l3_len = request.outer_l3_len;
+
+	if (request.tunnel_vxlan) {
+		mbuf.ol_flags &= ~dpdk::TX_TUNNEL_MASK;
+		mbuf.ol_flags |= dpdk::TX_TUNNEL_VXLAN;
+	}
+
+	if (request.outer_ipv4_checksum) {
+		mbuf.ol_flags |= dpdk::TX_OUTER_IPV4 | dpdk::TX_OUTER_IP_CKSUM;
+	}
+
+	if (request.layer3 == OffloadLayer3.IPV4 || request.ipv4_checksum) {
+		mbuf.ol_flags |= dpdk::TX_IPV4;
+	}
+	else if (request.layer3 == OffloadLayer3.IPV6) {
+		mbuf.ol_flags |= dpdk::TX_IPV6;
+	}
+
+	if (request.ipv4_checksum) {
+		mbuf.ol_flags |= dpdk::TX_IP_CKSUM;
+	}
+
+	if (request.tcp_checksum || request.udp_checksum) {
+		mbuf.ol_flags &= ~dpdk::TX_L4_MASK;
+		mbuf.ol_flags |= request.tcp_checksum ? dpdk::TX_TCP_CKSUM : dpdk::TX_UDP_CKSUM;
+	}
 }
 
 // --- EAL / port helpers ---------------------------------------------------
@@ -213,7 +243,7 @@ fn Mempool* make_mbuf_pool(GeneratedPacket* packet, ulong worker_count, ushort b
 		mbuf_count_for(worker_count, batch_size),
 		RUNTIME_MBUF_CACHE_SIZE,
 		0,
-		(ushort)dpdk::ff_mbuf_default_buf_size(),
+		(ushort)dpdk::MBUF_DEFAULT_BUF_SIZE,
 		(int)dpdk::rte_socket_id());
 	if (pool == null) {
 		errors.push(string::tformat("rte_pktmbuf_pool_create failed: %s", dpdk::strerror(dpdk::ff_rte_errno())));
@@ -691,7 +721,7 @@ fn bool wait_for_all(uint* lcores, WorkerContext* tx_ctxs, usz tx_launched, RxWo
 	ulong interval = options.stats_interval_seconds.value;
 	bool[RUNTIME_MAX_LCORES] joined;
 	usz joined_count = 0;
-	uint wait_state = dpdk::ff_lcore_wait_state();
+	uint wait_state = dpdk::LCORE_WAIT_STATE;
 	LiveStatsState state;
 	state = {};
 	state.start = time(null);
@@ -1065,7 +1095,7 @@ fn void run_capture(Config config, String eal_program_name, RunOptions options, 
 		RUNTIME_CAPTURE_MBUF_COUNT,
 		RUNTIME_MBUF_CACHE_SIZE,
 		0,
-		(ushort)dpdk::ff_mbuf_default_buf_size(),
+		(ushort)dpdk::MBUF_DEFAULT_BUF_SIZE,
 		(int)dpdk::rte_socket_id());
 	if (pool == null) {
 		errors.push(string::tformat("rte_pktmbuf_pool_create failed: %s", dpdk::strerror(dpdk::ff_rte_errno())));
