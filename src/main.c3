@@ -48,7 +48,7 @@ fn int run_check(String input, bool parse_only, Registry* reg) {
 		return 1;
 	}
 
-	io::printfn("parsed packet with %d header(s)", packet.len);
+	io::printfn("parsed packet with %d header(s)", packet.len());
 	if (parse_only) return 0;
 
 	CheckResult result = checker::checker_with_registry(reg).check(packet);
@@ -69,7 +69,7 @@ fn int run_program(String input, bool parse_only, Registry* reg) {
 		return 1;
 	}
 
-	io::printfn("parsed program with %d variable(s)", program.variables.len);
+	io::printfn("parsed program with %d variable(s)", program.variables.len());
 	if (parse_only) return 0;
 
 	Checker checker = checker::checker_with_registry(reg);

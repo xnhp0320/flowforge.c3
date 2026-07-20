@@ -22,7 +22,7 @@ struct FlowIndexPlan {
 
 struct GeneratedPacket {
 	char[] base_payload;
-	PayloadFieldModifier[] modifiers;
+	List{PayloadFieldModifier} modifiers;
 	PacketFixupPlan fixup_plan;
 	usz packet_len;
 	FlowIndexPlan flow_plan;
@@ -134,7 +134,7 @@ fn bool PacketGenerator.apply_flow_checksums_only(&self, GeneratedPacket* packet
 		errors.push("payload buffer is smaller than the packet length");
 		return false;
 	}
-	if (packet.modifiers.len == 0) return true;
+	if (packet.modifiers.len() == 0) return true;
 
 	char[] packet_payload = payload[:packet.packet_len];
 	if (!apply_flow_index(packet_payload, packet.modifiers, flow_index, errors)) {
@@ -149,7 +149,7 @@ fn bool PacketGenerator.apply_flow_checksums_only(&self, GeneratedPacket* packet
 <* Unchecked DPDK live Tx hot-path variant. The runtime validates flow indexes
    and payload sizing once before workers are launched. *>
 fn bool PacketGenerator.apply_flow_checksums_only_unchecked(&self, GeneratedPacket* packet, ulong flow_index, char[] payload, List{String}* errors) {
-	if (packet.modifiers.len == 0) return true;
+	if (packet.modifiers.len() == 0) return true;
 
 	char[] packet_payload = payload[:packet.packet_len];
 	if (!apply_flow_index(packet_payload, packet.modifiers, flow_index, errors)) {
@@ -192,11 +192,10 @@ fn bool PacketGenerator.serialize_generated(&self, PacketConstructor packet, Fix
 
 <* Deep-copies the serializer's (temp-allocated) modifiers into `alloc` so the
    GeneratedPacket owns them independently of the temp arena. *>
-fn PayloadFieldModifier[] copy_modifiers(PayloadFieldModifier[] src, Allocator alloc) {
-	if (src.len == 0) return {};
-	PayloadFieldModifier[] dst = alloc::new_array(alloc, PayloadFieldModifier, (sz)src.len);
-	for (usz i = 0; i < src.len; i++) {
-		PayloadFieldModifier m = src[i];
+fn List{PayloadFieldModifier} copy_modifiers(PayloadFieldModifier[] src, Allocator alloc) {
+	List{PayloadFieldModifier} dst;
+	dst.init(alloc);
+	foreach (m : src) {
 		m.protocol = m.protocol.copy(alloc);
 		m.field = m.field.copy(alloc);
 		switch (m.values_kind) {
@@ -207,7 +206,7 @@ fn PayloadFieldModifier[] copy_modifiers(PayloadFieldModifier[] src, Allocator a
 			case ModifierValueKind.IPV6_RANGES:
 				m.ipv6_ranges = dup_ipv6_ranges(m.ipv6_ranges, alloc);
 		}
-		dst[i] = m;
+		dst.push(m);
 	}
 	return dst;
 }
@@ -249,12 +248,12 @@ fn void GeneratedPacket.free(&self) {
 		if (m.protocol.len) alloc::free(self.allocator, m.protocol.ptr);
 		if (m.field.len) alloc::free(self.allocator, m.field.ptr);
 	}
-	if (self.modifiers.len) alloc::free(self.allocator, self.modifiers.ptr);
+	if (self.modifiers.len()) self.modifiers.free();
 	if (self.base_payload.len) alloc::free(self.allocator, self.base_payload.ptr);
 	*self = {};
 }
 
-fn bool plan_flow_indexes(PayloadFieldModifier[] modifiers, MaybeCount packet_count, FlowIndexPlan* out, List{String}* errors) {
+fn bool plan_flow_indexes(List{PayloadFieldModifier} modifiers, MaybeCount packet_count, FlowIndexPlan* out, List{String}* errors) {
 	FlowIndexPlan plan = { .total_flows = 1, .planned_packets = 1 };
 	foreach (m : modifiers) {
 		if (m.value_count == 0) {
@@ -279,7 +278,7 @@ fn bool plan_flow_indexes(PayloadFieldModifier[] modifiers, MaybeCount packet_co
 	return true;
 }
 
-fn bool apply_flow_index(char[] payload, PayloadFieldModifier[] modifiers, ulong flow_index, List{String}* errors) {
+fn bool apply_flow_index(char[] payload, List{PayloadFieldModifier} modifiers, ulong flow_index, List{String}* errors) {
 	ulong remaining = flow_index;
 	foreach (&m : modifiers) {
 		ulong value_index = remaining % m.value_count;

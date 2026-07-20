@@ -27,11 +27,11 @@ struct OptionConstructor {
 struct HeaderConstructor {
 	String protocol;
 	usz offset;
-	FieldConstructor[] fields;
-	OptionConstructor[] options;
+	List{FieldConstructor} fields;
+	List{OptionConstructor} options;
 }
 
-typedef PacketConstructor = HeaderConstructor[];
+alias PacketConstructor = List{HeaderConstructor};
 
 struct BuildResult {
 	bool ok;
@@ -43,6 +43,7 @@ struct BuildResult {
 fn void BuildResult.tinit(&self) {
 	self.warnings.tinit();
 	self.errors.tinit();
+	self.packet.tinit();
 }
 
 fn ScalarValue? scalar_attribute_value(Attribute* attr, String* error) {
@@ -331,8 +332,6 @@ fn void apply_inference_rules(List{HeaderConstructor}* constructor, Registry* re
 fn BuildResult build(Registry* registry, Packet packet) {
 	BuildResult result;
 	result.tinit();
-	List{HeaderConstructor} constructor;
-	constructor.tinit();
 	usz packet_bit_offset = 0;
 
 	foreach (header : packet) {
@@ -470,27 +469,26 @@ fn BuildResult build(Registry* registry, Packet packet) {
 		HeaderConstructor header_constructor = {
 			.protocol = header.protocol,
 			.offset = packet_bit_offset / 8,
-			.fields = field_list.to_tarray(),
-			.options = option_list.to_tarray(),
+			.fields = field_list,
+			.options = option_list,
 		};
 
 		usz option_bit_width = header_option_bit_width(&header_constructor, registry, &result.errors);
 
-		constructor.push(header_constructor);
+		result.packet.push(header_constructor);
 		packet_bit_offset += header_spec.bit_width + option_bit_width;
 		if (packet_bit_offset % 8 == 0) {
-			HeaderConstructor* last = constructor.get_ref((sz)constructor.len() - 1);
+			HeaderConstructor* last = result.packet.get_ref((sz)result.packet.len() - 1);
 			packet_bit_offset += payload_bit_width(last, packet_bit_offset, &result.errors);
 		}
 	}
 
 	if (result.errors.len() > 0) return result;
 
-	apply_inference_rules(&constructor, registry, &result.warnings, &result.errors);
+	apply_inference_rules(&result.packet, registry, &result.warnings, &result.errors);
 
 	if (result.errors.len() > 0) return result;
 
 	result.ok = true;
-	result.packet = (PacketConstructor)constructor.to_tarray();
 	return result;
 }

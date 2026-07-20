@@ -159,13 +159,12 @@ fn Header? Parser.parse_header(&self) {
 	String protocol = proto_tok.lexeme;
 	if (catch self.lexer.next()) return PARSE_ERROR~;
 
-	if (self.lexer.peek().type != TokenType.LEFT_PAREN) {
-		return { .protocol = protocol, .attributes = {} };
-	}
-	if (catch self.lexer.next()) return PARSE_ERROR~;
-
 	List{Attribute} attrs;
 	attrs.tinit();
+	if (self.lexer.peek().type != TokenType.LEFT_PAREN) {
+		return { .protocol = protocol, .attributes = attrs };
+	}
+	if (catch self.lexer.next()) return PARSE_ERROR~;
 
 	if (self.lexer.peek().type != TokenType.RIGHT_PAREN) {
 		while (true) {
@@ -181,7 +180,7 @@ fn Header? Parser.parse_header(&self) {
 	}
 
 	if (!self.consume(TokenType.RIGHT_PAREN)) return PARSE_ERROR~;
-	return { .protocol = protocol, .attributes = attrs.to_tarray() };
+	return { .protocol = protocol, .attributes = attrs };
 }
 
 fn Packet? Parser.parse_packet_expression(&self) {
@@ -198,7 +197,7 @@ fn Packet? Parser.parse_packet_expression(&self) {
 		if (catch next_header) return PARSE_ERROR~;
 		result.push(next_header);
 	}
-	return (Packet)result.to_tarray();
+	return result;
 }
 
 fn Expression? Parser.parse_expression(&self) {
@@ -239,7 +238,7 @@ fn Program? Parser.parse_program(&self) {
 		if (catch variable) return PARSE_ERROR~;
 		variables.push(variable);
 	}
-	return { .variables = variables.to_tarray() };
+	return { .variables = variables };
 }
 
 fn Packet? Parser.parse_packet(&self) {

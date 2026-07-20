@@ -1,4 +1,5 @@
 module flowforge::ast;
+import std::collections::list;
 import std::collections::maybe;
 
 alias MaybeExpression = Maybe{Expression};
@@ -10,10 +11,10 @@ struct Attribute {
 
 struct Header {
 	String protocol;
-	Attribute[] attributes;
+	List{Attribute} attributes;
 }
 
-typedef Packet = Header[];
+alias Packet = List{Header};
 
 enum ExpressionKind {
 	STRING,
@@ -36,7 +37,7 @@ struct Variable {
 }
 
 struct Program {
-	Variable[] variables;
+	List{Variable} variables;
 }
 
 fn Expression expr_string(String s) {
