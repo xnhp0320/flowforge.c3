@@ -818,14 +818,22 @@ fn FixupPlanResult plan_packet_fixups(PacketConstructor packet, Registry* regist
 	return result;
 }
 
+fn void push_fixup_error(List{String}* errors, bool* has_errors, String message) @private {
+	if (!*has_errors) {
+		errors.init(tmem, 1);
+		*has_errors = true;
+	}
+	errors.push(message);
+}
+
 fn FixupResult apply_fixup_plan(char[] buffer, PacketFixupPlan plan) {
 	FixupResult result;
 	result.offload = plan.offload;
 	List{String} errors;
-	errors.tinit();
+	bool has_errors = false;
 
 	if (buffer.len < plan.packet_len) {
-		errors.push(string::tformat("buffer has %d bytes but packet length is %d bytes", buffer.len, plan.packet_len));
+		push_fixup_error(&errors, &has_errors, string::tformat("buffer has %d bytes but packet length is %d bytes", buffer.len, plan.packet_len));
 		result.errors = errors.to_tarray();
 		return result;
 	}
@@ -867,7 +875,7 @@ fn FixupResult apply_fixup_plan(char[] buffer, PacketFixupPlan plan) {
 			}
 
 			if (!has_pseudo_header) {
-				errors.push("UDP checksum requires IPv4 or IPv6 header");
+				push_fixup_error(&errors, &has_errors, "UDP checksum requires IPv4 or IPv6 header");
 			}
 			else if (udp.checksum == FixupMode.SOFTWARE) {
 				ushort checksum = internet_checksum(pseudo_sum + checksum_sum(payload[udp.offset : udp_len]));
@@ -896,7 +904,7 @@ fn FixupResult apply_fixup_plan(char[] buffer, PacketFixupPlan plan) {
 		}
 
 		if (!has_pseudo_header) {
-			errors.push("TCP checksum requires IPv4 or IPv6 header");
+			push_fixup_error(&errors, &has_errors, "TCP checksum requires IPv4 or IPv6 header");
 		}
 		else if (tcp.checksum == FixupMode.SOFTWARE) {
 			write_u16(payload, tcp.offset + 16, internet_checksum(pseudo_sum + checksum_sum(payload[tcp.offset : tcp_len])));
@@ -912,8 +920,12 @@ fn FixupResult apply_fixup_plan(char[] buffer, PacketFixupPlan plan) {
 			internet_checksum(checksum_sum(payload[icmp.offset : plan.packet_len - icmp.offset])));
 	}
 
-	result.errors = errors.to_tarray();
-	result.ok = errors.len() == 0;
+	if (has_errors) {
+		result.errors = errors.to_tarray();
+		return result;
+	}
+
+	result.ok = true;
 	return result;
 }
 
