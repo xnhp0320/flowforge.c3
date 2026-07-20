@@ -1,0 +1,29 @@
+src/runtime_live.c3
+  s_03635c32a6332d::t_c081d156a74e31 767-768,792-793,815-816,831
+  s_03635c32a6332d::t_ab59063feff988 416,419,457,460,489
+  s_03635c32a6332d::t_379e26dd520e48 333-344,528-557
+  s_03635c32a6332d::t_3208c205f1763e 670
+  s_03635c32a6332d::t_b23dd682a01139 69-83
+  s_03635c32a6332d::t_294a2d1fb2450f 558,562-669,671,673,692-696,700-702
+  s_03635c32a6332d::t_9e40b79379d3c4 19,33,100,112-140
+  s_03635c32a6332d::t_bffacb0409dbe7 559
+  s_03635c32a6332d::t_a5d2c7010af4ae 672
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "5a4a15896d10c54fde7b079bd55566a177ed3130",
+  "prompts": {},
+  "sessions": {
+    "s_03635c32a6332d": {
+      "agent_id": {
+        "tool": "trae",
+        "id": "6a5d8aece5f9c5dce8310046",
+        "model": "gpt-5.5__max"
+      },
+      "human_author": "xnhp0320 <xnhp0320@gmail.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
