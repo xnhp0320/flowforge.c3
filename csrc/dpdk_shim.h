@@ -49,6 +49,7 @@ void ff_mbuf_layout(size_t *out);
 int ff_rte_errno(void);
 unsigned ff_lcore_id(void);
 int ff_pktmbuf_alloc_bulk(struct rte_mempool *pool, struct rte_mbuf **mbufs, unsigned count);
+int ff_pktmbuf_raw_alloc_bulk(struct rte_mempool *pool, struct rte_mbuf **mbufs, unsigned count);
 void ff_pktmbuf_free(struct rte_mbuf *mbuf);
 void ff_pktmbuf_free_bulk(struct rte_mbuf **mbufs, unsigned count);
 uint16_t ff_eth_tx_burst(uint16_t port_id, uint16_t queue_id, struct rte_mbuf **tx_pkts, uint16_t nb_pkts);

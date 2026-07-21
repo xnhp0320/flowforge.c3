@@ -153,6 +153,7 @@ extern fn void ff_mbuf_layout(usz* out);
 extern fn int ff_rte_errno();
 extern fn uint ff_lcore_id();
 extern fn int ff_pktmbuf_alloc_bulk(Mempool* pool, Mbuf** mbufs, uint count);
+extern fn int ff_pktmbuf_raw_alloc_bulk(Mempool* pool, Mbuf** mbufs, uint count);
 extern fn void ff_pktmbuf_free(Mbuf* mbuf);
 extern fn void ff_pktmbuf_free_bulk(Mbuf** mbufs, uint count);
 extern fn ushort ff_eth_tx_burst(ushort port_id, ushort queue_id, Mbuf** tx_pkts, ushort nb_pkts);

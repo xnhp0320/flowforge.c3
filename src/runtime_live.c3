@@ -148,6 +148,7 @@ struct FlowRange {
 struct SeedContext {
 	char* base_ptr;
 	usz base_len;
+	PacketOffloadRequest offload;
 	uint seeded;
 }
 
@@ -234,6 +235,10 @@ fn void seed_mbuf_base_payload(Mempool* pool, void* opaque, void* obj, uint inde
 	Mbuf* mbuf = obj;
 	char* data = mbuf.mtod();
 	mem::copy(data, context.base_ptr, (sz)context.base_len);
+	mbuf.data_len = (ushort)context.base_len;
+	mbuf.pkt_len = (uint)context.base_len;
+	mbuf.reset_offload();
+	apply_dpdk_offload(mbuf, context.offload);
 	context.seeded++;
 }
 
@@ -250,7 +255,7 @@ fn Mempool* make_mbuf_pool(GeneratedPacket* packet, ulong worker_count, ushort b
 		return null;
 	}
 
-	SeedContext context = { .base_ptr = packet.base_payload.ptr, .base_len = packet.base_payload.len };
+	SeedContext context = { .base_ptr = packet.base_payload.ptr, .base_len = packet.base_payload.len, .offload = packet.fixup_plan.offload };
 	uint iterated = dpdk::rte_mempool_obj_iter(pool, &seed_mbuf_base_payload, &context);
 	if (iterated == 0 || context.seeded != iterated) {
 		errors.push("failed to seed packet base payload into the mbuf pool");
@@ -360,6 +365,15 @@ fn bool prepare_batch_packet(WorkerContext* context, Mbuf* mbuf, ulong flow_inde
 	return true;
 }
 
+fn bool has_flow_modifiers(GeneratedPacket* packet) @private => packet.modifiers.len() != 0;
+
+fn int alloc_worker_mbufs(WorkerContext* context, Mbuf** batch, ushort count) @private {
+	if (!has_flow_modifiers(context.packet)) {
+		return dpdk::ff_pktmbuf_raw_alloc_bulk(context.mbuf_pool, batch, count);
+	}
+	return dpdk::ff_pktmbuf_alloc_bulk(context.mbuf_pool, batch, count);
+}
+
 fn void publish_worker_stats(WorkerContext* context) @private {
 	if (context.published_stats == null) return;
 	context.published_stats.tx_attempted.store(context.tx_attempted);
@@ -429,16 +443,18 @@ fn int run_worker_once_impl(WorkerContext* context) @private {
 	while (transmitted < planned && !runtime_stop_requested) {
 		ulong remaining = planned - transmitted;
 		ushort count = (ushort)(context.batch_size < remaining ? context.batch_size : remaining);
-		if (dpdk::ff_pktmbuf_alloc_bulk(context.mbuf_pool, &batch[0], count) != 0) {
+		if (alloc_worker_mbufs(context, &batch[0], count) != 0) {
 			context.errors.push(string::tformat("rte_pktmbuf_alloc_bulk failed for %d packet(s): %s", count, dpdk::strerror(dpdk::ff_rte_errno())));
 			return 1;
 		}
 
-		for (ushort i = 0; i < count; i++) {
-			ulong flow_index = context.first_flow + (transmitted + i) / context.clone_count;
-			if (!prepare_batch_packet(context, batch[i], flow_index)) {
-				free_unsent(&batch[0], 0, count);
-				return 1;
+		if (has_flow_modifiers(context.packet)) {
+			for (ushort i = 0; i < count; i++) {
+				ulong flow_index = context.first_flow + (transmitted + i) / context.clone_count;
+				if (!prepare_batch_packet(context, batch[i], flow_index)) {
+					free_unsent(&batch[0], 0, count);
+					return 1;
+				}
 			}
 		}
 
@@ -469,20 +485,22 @@ fn int run_worker_impl(WorkerContext* context) @private {
 	ulong global_transmission = 0;
 	while (!runtime_stop_requested) {
 		ushort count = context.batch_size;
-		if (dpdk::ff_pktmbuf_alloc_bulk(context.mbuf_pool, &batch[0], count) != 0) {
+		if (alloc_worker_mbufs(context, &batch[0], count) != 0) {
 			context.errors.push(string::tformat("rte_pktmbuf_alloc_bulk failed for %d packet(s): %s", count, dpdk::strerror(dpdk::ff_rte_errno())));
 			return 1;
 		}
 
-		for (ushort i = 0; i < count; i++) {
-			ulong local_transmission = global_transmission + i;
-			ulong flow_index = context.first_flow + (local_transmission / context.clone_count) % context.flow_count;
-			if ((short)i < (short)count - 1) {
-			    @prefetch(batch[i].mtod(), PrefetchLocality.FAR, true);
-			}
-			if (!prepare_batch_packet(context, batch[i], flow_index)) {
-				free_unsent(&batch[0], 0, count);
-				return 1;
+		if (has_flow_modifiers(context.packet)) {
+			for (ushort i = 0; i < count; i++) {
+				ulong local_transmission = global_transmission + i;
+				ulong flow_index = context.first_flow + (local_transmission / context.clone_count) % context.flow_count;
+				if ((short)i < (short)count - 1) {
+					@prefetch(batch[i].mtod(), PrefetchLocality.FAR, true);
+				}
+				if (!prepare_batch_packet(context, batch[i], flow_index)) {
+					free_unsent(&batch[0], 0, count);
+					return 1;
+				}
 			}
 		}
 

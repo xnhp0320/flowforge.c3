@@ -14,7 +14,6 @@
 #include <string.h>
 
 #ifdef __linux__
-#include <errno.h>
 #include <fcntl.h>
 #include <linux/if.h>
 #include <linux/if_tun.h>
@@ -50,6 +49,10 @@ unsigned ff_lcore_id(void) {
 
 int ff_pktmbuf_alloc_bulk(struct rte_mempool *pool, struct rte_mbuf **mbufs, unsigned count) {
 	return rte_pktmbuf_alloc_bulk(pool, mbufs, count);
+}
+
+int ff_pktmbuf_raw_alloc_bulk(struct rte_mempool *pool, struct rte_mbuf **mbufs, unsigned count) {
+	return rte_mempool_get_bulk(pool, (void**)mbufs, count);
 }
 
 void ff_pktmbuf_free(struct rte_mbuf *mbuf) {
