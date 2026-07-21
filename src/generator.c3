@@ -113,7 +113,8 @@ fn bool PacketGenerator.apply_flow(&self, GeneratedPacket* packet, ulong flow_in
 	}
 
 	char[] packet_payload = payload[:packet.packet_len];
-	if (!apply_flow_index(packet_payload, packet.modifiers, flow_index, errors)) {
+	uint ipv4_pseudo_delta = 0;
+	if (!apply_flow_index(packet_payload, packet.modifiers, packet.fixup_plan, flow_index, errors, &ipv4_pseudo_delta)) {
 		return false;
 	}
 
@@ -137,11 +138,12 @@ fn bool PacketGenerator.apply_flow_checksums_only(&self, GeneratedPacket* packet
 	if (packet.modifiers.len() == 0) return true;
 
 	char[] packet_payload = payload[:packet.packet_len];
-	if (!apply_flow_index(packet_payload, packet.modifiers, flow_index, errors)) {
+	uint ipv4_pseudo_delta = 0;
+	if (!apply_flow_index(packet_payload, packet.modifiers, packet.fixup_plan, flow_index, errors, &ipv4_pseudo_delta)) {
 		return false;
 	}
 
-	FixupResult fixed = serializer::apply_checksum_fixup_plan(packet_payload, packet.fixup_plan);
+	FixupResult fixed = serializer::apply_checksum_fixup_plan(packet_payload, packet.fixup_plan, ipv4_pseudo_delta);
 	foreach (e : fixed.errors) errors.push(e);
 	return fixed.ok;
 }
@@ -152,11 +154,12 @@ fn bool PacketGenerator.apply_flow_checksums_only_unchecked(&self, GeneratedPack
 	if (packet.modifiers.len() == 0) return true;
 
 	char[] packet_payload = payload[:packet.packet_len];
-	if (!apply_flow_index(packet_payload, packet.modifiers, flow_index, errors)) {
+	uint ipv4_pseudo_delta = 0;
+	if (!apply_flow_index(packet_payload, packet.modifiers, packet.fixup_plan, flow_index, errors, &ipv4_pseudo_delta)) {
 		return false;
 	}
 
-	FixupResult fixed = serializer::apply_checksum_fixup_plan_unchecked(packet_payload, packet.fixup_plan);
+	FixupResult fixed = serializer::apply_checksum_fixup_plan_unchecked(packet_payload, packet.fixup_plan, ipv4_pseudo_delta);
 	foreach (e : fixed.errors) errors.push(e);
 	return fixed.ok;
 }
@@ -278,16 +281,22 @@ fn bool plan_flow_indexes(List{PayloadFieldModifier} modifiers, MaybeCount packe
 	return true;
 }
 
-fn bool apply_flow_index(char[] payload, List{PayloadFieldModifier} modifiers, ulong flow_index, List{String}* errors) {
+fn bool apply_flow_index(char[] payload, List{PayloadFieldModifier} modifiers, PacketFixupPlan fixup_plan, ulong flow_index, List{String}* errors, uint* ipv4_pseudo_delta) {
 	ulong remaining = flow_index;
 	foreach (&m : modifiers) {
 		ulong value_index = remaining % m.value_count;
 		remaining /= m.value_count;
 		String err = "";
+		uint? delta = m.ipv4_pseudo_delta(fixup_plan, value_index);
+		if (catch delta) {
+			errors.push(string::tformat("value index %d is out of range for modifier '%s.%s'", value_index, m.protocol, m.field));
+			return false;
+		}
 		if (!m.apply(payload, value_index, &err)) {
 			errors.push(err);
 			return false;
 		}
+		*ipv4_pseudo_delta += delta;
 	}
 	return true;
 }

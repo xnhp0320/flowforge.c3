@@ -141,6 +141,8 @@ struct PacketFixupPlan {
 	Maybe{TcpFixup} tcp;
 	Maybe{IcmpFixup} icmp;
 	PacketOffloadRequest offload;
+	Maybe{uint} udp_ipv4_pseudo_base;
+	Maybe{uint} tcp_ipv4_pseudo_base;
 }
 
 struct FixupPlanResult {
@@ -392,6 +394,24 @@ fn bool PayloadFieldModifier.apply(&self, char[] payload, ulong value_index, Str
 			write_modifier_value(self, payload, 0, ip);
 			return true;
 	}
+}
+
+fn uint ipv4_replace_delta(uint old_value, uint new_value) {
+	return (uint)((new_value >> 16) & 0xffff) +
+		(uint)(new_value & 0xffff) +
+		(uint)(~(old_value >> 16) & 0xffff) +
+		(uint)(~old_value & 0xffff);
+}
+
+fn uint? PayloadFieldModifier.ipv4_pseudo_delta(&self, PacketFixupPlan plan, ulong value_index) {
+	if (self.patch_kind != ModifierPatchKind.IPV4) return 0;
+	if (!plan.ipv4.has_value) return 0;
+	usz ip_offset = plan.ipv4.value.offset;
+	if (self.byte_offset != ip_offset + 12 && self.byte_offset != ip_offset + 16) return 0;
+
+	Ipv4RangeAt? found = ipv4_range_at_index(self.ipv4_ranges, value_index);
+	if (catch found) return OUT_OF_RANGE~;
+	return ipv4_replace_delta(self.ipv4_ranges[0].first, found.range.first + (uint)found.offset);
 }
 
 fn UIntPatchRange[] make_uint_patch_ranges(UIntRange[] src) {
@@ -988,6 +1008,7 @@ fn FixupPlanResult plan_packet_fixups(PacketConstructor packet, Registry* regist
 			}
 		}
 
+		populate_ipv4_pseudo_bases(payload, &result.plan);
 		result.errors = errors.to_tarray();
 		result.ok = errors.len() == 0;
 		return result;
@@ -1129,6 +1150,7 @@ fn FixupPlanResult plan_packet_fixups(PacketConstructor packet, Registry* regist
 		}
 	}
 
+	populate_ipv4_pseudo_bases(payload, &result.plan);
 	result.errors = errors.to_tarray();
 	result.ok = errors.len() == 0;
 	return result;
@@ -1152,6 +1174,33 @@ fn uint? l4_pseudo_sum(char[] payload, PacketFixupPlan plan, char protocol, uint
 		return ipv6_pseudo_sum(payload, plan.ipv6.value.offset, protocol, l4_len);
 	}
 	return PSEUDO_HEADER_MISSING~;
+}
+
+fn uint? l4_pseudo_sum_with_delta(char[] payload, PacketFixupPlan plan, char protocol, uint l4_len, uint ipv4_pseudo_delta) @private {
+	uint base;
+	if (protocol == UDP_PROTOCOL && plan.udp_ipv4_pseudo_base.has_value) {
+		base = plan.udp_ipv4_pseudo_base.value;
+	} else if (protocol == TCP_PROTOCOL && plan.tcp_ipv4_pseudo_base.has_value) {
+		base = plan.tcp_ipv4_pseudo_base.value;
+	} else {
+		uint? computed = l4_pseudo_sum(payload, plan, protocol, l4_len);
+		if (catch computed) return PSEUDO_HEADER_MISSING~;
+		base = computed;
+	}
+	return base + ipv4_pseudo_delta;
+}
+
+fn void populate_ipv4_pseudo_bases(char[] payload, PacketFixupPlan* plan) @private {
+	if (!plan.ipv4.has_value) return;
+	usz ip_offset = plan.ipv4.value.offset;
+	if (plan.udp.has_value && plan.udp.value.checksum != FixupMode.DISABLED) {
+		usz udp_len = plan.packet_len - plan.udp.value.offset;
+		plan.udp_ipv4_pseudo_base.set(ipv4_pseudo_sum(payload, ip_offset, UDP_PROTOCOL, (ushort)udp_len));
+	}
+	if (plan.tcp.has_value && plan.tcp.value.checksum != FixupMode.DISABLED) {
+		usz tcp_len = plan.packet_len - plan.tcp.value.offset;
+		plan.tcp_ipv4_pseudo_base.set(ipv4_pseudo_sum(payload, ip_offset, TCP_PROTOCOL, (ushort)tcp_len));
+	}
 }
 
 fn FixupResult apply_fixup_plan(char[] buffer, PacketFixupPlan plan) {
@@ -1262,7 +1311,7 @@ fn FixupResult apply_fixup_plan(char[] buffer, PacketFixupPlan plan) {
 <* Refreshes checksum fields only. Use this when the payload was copied from a
    fully fixed-up base packet and only flow-varying fields were patched. This
    deliberately does not rewrite IPv4/IPv6/UDP length fields. *>
-fn FixupResult apply_checksum_fixup_plan(char[] buffer, PacketFixupPlan plan) {
+fn FixupResult apply_checksum_fixup_plan(char[] buffer, PacketFixupPlan plan, uint ipv4_pseudo_delta = 0) {
 	FixupResult result;
 	result.offload = plan.offload;
 	List{String} errors;
@@ -1305,7 +1354,7 @@ fn FixupResult apply_checksum_fixup_plan(char[] buffer, PacketFixupPlan plan) {
 		if (udp.checksum != FixupMode.DISABLED) {
 			write_u16(payload, udp.offset + 6, 0);
 
-			uint? pseudo = l4_pseudo_sum(payload, plan, UDP_PROTOCOL, (uint)udp_len);
+			uint? pseudo = l4_pseudo_sum_with_delta(payload, plan, UDP_PROTOCOL, (uint)udp_len, ipv4_pseudo_delta);
 			if (catch pseudo) {
 				push_fixup_error(&errors, &has_errors, "UDP checksum requires IPv4 or IPv6 header");
 			}
@@ -1324,7 +1373,7 @@ fn FixupResult apply_checksum_fixup_plan(char[] buffer, PacketFixupPlan plan) {
 		write_u16(payload, tcp.offset + 16, 0);
 		usz tcp_len = plan.packet_len - tcp.offset;
 
-		uint? pseudo = l4_pseudo_sum(payload, plan, TCP_PROTOCOL, (uint)tcp_len);
+		uint? pseudo = l4_pseudo_sum_with_delta(payload, plan, TCP_PROTOCOL, (uint)tcp_len, ipv4_pseudo_delta);
 		if (catch pseudo) {
 			push_fixup_error(&errors, &has_errors, "TCP checksum requires IPv4 or IPv6 header");
 		}
@@ -1353,7 +1402,7 @@ fn FixupResult apply_checksum_fixup_plan(char[] buffer, PacketFixupPlan plan) {
 
 <* Unchecked variant for the DPDK live Tx hot path. The caller must guarantee
    `buffer.len >= plan.packet_len` during setup. *>
-fn FixupResult apply_checksum_fixup_plan_unchecked(char[] buffer, PacketFixupPlan plan) {
+fn FixupResult apply_checksum_fixup_plan_unchecked(char[] buffer, PacketFixupPlan plan, uint ipv4_pseudo_delta = 0) {
 	FixupResult result;
 	result.offload = plan.offload;
 	List{String} errors;
@@ -1389,7 +1438,7 @@ fn FixupResult apply_checksum_fixup_plan_unchecked(char[] buffer, PacketFixupPla
 		if (udp.checksum != FixupMode.DISABLED) {
 			write_u16(payload, udp.offset + 6, 0);
 
-			uint? pseudo = l4_pseudo_sum(payload, plan, UDP_PROTOCOL, (uint)udp_len);
+			uint? pseudo = l4_pseudo_sum_with_delta(payload, plan, UDP_PROTOCOL, (uint)udp_len, ipv4_pseudo_delta);
 			if (catch pseudo) {
 				push_fixup_error(&errors, &has_errors, "UDP checksum requires IPv4 or IPv6 header");
 			}
@@ -1408,7 +1457,7 @@ fn FixupResult apply_checksum_fixup_plan_unchecked(char[] buffer, PacketFixupPla
 		write_u16(payload, tcp.offset + 16, 0);
 		usz tcp_len = plan.packet_len - tcp.offset;
 
-		uint? pseudo = l4_pseudo_sum(payload, plan, TCP_PROTOCOL, (uint)tcp_len);
+		uint? pseudo = l4_pseudo_sum_with_delta(payload, plan, TCP_PROTOCOL, (uint)tcp_len, ipv4_pseudo_delta);
 		if (catch pseudo) {
 			push_fixup_error(&errors, &has_errors, "TCP checksum requires IPv4 or IPv6 header");
 		}
