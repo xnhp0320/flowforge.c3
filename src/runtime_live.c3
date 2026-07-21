@@ -348,30 +348,18 @@ fn void free_unsent(Mbuf** packets, ushort begin, ushort end) @private {
 }
 
 fn bool prepare_batch_packet(WorkerContext* context, Mbuf* mbuf, ulong flow_index) @private {
-	char* packet_data = mbuf.append((ushort)context.packet.packet_len);
-	if (packet_data == null) {
-		context.errors.push(string::tformat("packet length %d does not fit in an mbuf", context.packet.packet_len));
-		return false;
-	}
-
-	mbuf.reset_offload();
-
-	char[] payload = packet_data[:context.packet.packet_len];
+	char[] payload = mbuf.mtod()[:context.packet.packet_len];
 	if (!context.generator.apply_flow_checksums_only_unchecked(context.packet, flow_index, payload, &context.errors)) {
 		return false;
 	}
 
-	apply_dpdk_offload(mbuf, context.packet.fixup_plan.offload);
 	return true;
 }
 
 fn bool has_flow_modifiers(GeneratedPacket* packet) @private => packet.modifiers.len() != 0;
 
 fn int alloc_worker_mbufs(WorkerContext* context, Mbuf** batch, ushort count) @private {
-	if (!has_flow_modifiers(context.packet)) {
-		return dpdk::ff_pktmbuf_raw_alloc_bulk(context.mbuf_pool, batch, count);
-	}
-	return dpdk::ff_pktmbuf_alloc_bulk(context.mbuf_pool, batch, count);
+	return dpdk::ff_pktmbuf_raw_alloc_bulk(context.mbuf_pool, batch, count);
 }
 
 fn void publish_worker_stats(WorkerContext* context) @private {
@@ -444,7 +432,7 @@ fn int run_worker_once_impl(WorkerContext* context) @private {
 		ulong remaining = planned - transmitted;
 		ushort count = (ushort)(context.batch_size < remaining ? context.batch_size : remaining);
 		if (alloc_worker_mbufs(context, &batch[0], count) != 0) {
-			context.errors.push(string::tformat("rte_pktmbuf_alloc_bulk failed for %d packet(s): %s", count, dpdk::strerror(dpdk::ff_rte_errno())));
+			context.errors.push(string::tformat("ff_pktmbuf_raw_alloc_bulk failed for %d packet(s): %s", count, dpdk::strerror(dpdk::ff_rte_errno())));
 			return 1;
 		}
 
@@ -486,7 +474,7 @@ fn int run_worker_impl(WorkerContext* context) @private {
 	while (!runtime_stop_requested) {
 		ushort count = context.batch_size;
 		if (alloc_worker_mbufs(context, &batch[0], count) != 0) {
-			context.errors.push(string::tformat("rte_pktmbuf_alloc_bulk failed for %d packet(s): %s", count, dpdk::strerror(dpdk::ff_rte_errno())));
+			context.errors.push(string::tformat("ff_pktmbuf_raw_alloc_bulk failed for %d packet(s): %s", count, dpdk::strerror(dpdk::ff_rte_errno())));
 			return 1;
 		}
 
