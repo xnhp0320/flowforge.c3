@@ -52,21 +52,26 @@ fn String offload_layer3_name(OffloadLayer3 layer3) {
 	}
 }
 
-fn void print_uint_ranges(UIntRange[] ranges) {
+fn void print_uint_ranges(UIntPatchRange[] ranges) {
 	foreach (i, r : ranges) {
-		io::printfn("      range[%d]: %d-%d", i, r.first, r.last);
+		io::printfn("      range[%d]: first=%d count=%d", i, r.first, r.count);
 	}
 }
 
-fn void print_ipv4_ranges(IPv4Range[] ranges) {
+fn void print_ipv4_ranges(IPv4PatchRange[] ranges) {
 	foreach (i, r : ranges) {
-		io::printfn("      range[%d]: %s-%s", i, r.first.to_string(), r.last.to_string());
+		io::printfn("      range[%d]: first=%s count=%d", i, value::ipv4_from_bytes({
+			(char)(r.first >> 24),
+			(char)((r.first >> 16) & 0xff),
+			(char)((r.first >> 8) & 0xff),
+			(char)(r.first & 0xff),
+		}).to_string(), r.count);
 	}
 }
 
-fn void print_ipv6_ranges(IPv6Range[] ranges) {
+fn void print_ipv6_ranges(IPv6PatchRange[] ranges) {
 	foreach (i, r : ranges) {
-		io::printfn("      range[%d]: %s-%s", i, r.first.to_string(), r.last.to_string());
+		io::printfn("      range[%d]: first=%s count=%d", i, r.first.to_string(), r.count);
 	}
 }
 

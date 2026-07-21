@@ -211,23 +211,23 @@ fn List{PayloadFieldModifier} copy_modifiers(PayloadFieldModifier[] src, Allocat
 	return dst;
 }
 
-fn UIntRange[] dup_uint_ranges(UIntRange[] src, Allocator alloc) {
+fn UIntPatchRange[] dup_uint_ranges(UIntPatchRange[] src, Allocator alloc) {
 	if (src.len == 0) return {};
-	UIntRange[] dst = alloc::new_array(alloc, UIntRange, (sz)src.len);
+	UIntPatchRange[] dst = alloc::new_array(alloc, UIntPatchRange, (sz)src.len);
 	foreach (i, r : src) dst[i] = r;
 	return dst;
 }
 
-fn IPv4Range[] dup_ipv4_ranges(IPv4Range[] src, Allocator alloc) {
+fn IPv4PatchRange[] dup_ipv4_ranges(IPv4PatchRange[] src, Allocator alloc) {
 	if (src.len == 0) return {};
-	IPv4Range[] dst = alloc::new_array(alloc, IPv4Range, (sz)src.len);
+	IPv4PatchRange[] dst = alloc::new_array(alloc, IPv4PatchRange, (sz)src.len);
 	foreach (i, r : src) dst[i] = r;
 	return dst;
 }
 
-fn IPv6Range[] dup_ipv6_ranges(IPv6Range[] src, Allocator alloc) {
+fn IPv6PatchRange[] dup_ipv6_ranges(IPv6PatchRange[] src, Allocator alloc) {
 	if (src.len == 0) return {};
-	IPv6Range[] dst = alloc::new_array(alloc, IPv6Range, (sz)src.len);
+	IPv6PatchRange[] dst = alloc::new_array(alloc, IPv6PatchRange, (sz)src.len);
 	foreach (i, r : src) dst[i] = r;
 	return dst;
 }
