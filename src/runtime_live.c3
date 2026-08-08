@@ -146,8 +146,7 @@ struct FlowRange {
 }
 
 struct SeedContext {
-	char* base_ptr;
-	usz base_len;
+	char[] base;
 	PacketOffloadRequest offload;
 	uint seeded;
 }
@@ -234,9 +233,9 @@ fn void seed_mbuf_base_payload(Mempool* pool, void* opaque, void* obj, uint inde
 	SeedContext* context = opaque;
 	Mbuf* mbuf = obj;
 	char* data = mbuf.mtod();
-	mem::copy(data, context.base_ptr, (sz)context.base_len);
-	mbuf.data_len = (ushort)context.base_len;
-	mbuf.pkt_len = (uint)context.base_len;
+	mem::copy(data, context.base.ptr, (sz)context.base.len);
+	mbuf.data_len = (ushort)context.base.len;
+	mbuf.pkt_len = (uint)context.base.len;
 	mbuf.reset_offload();
 	apply_dpdk_offload(mbuf, context.offload);
 	context.seeded++;
@@ -255,7 +254,7 @@ fn Mempool* make_mbuf_pool(GeneratedPacket* packet, ulong worker_count, ushort b
 		return null;
 	}
 
-	SeedContext context = { .base_ptr = packet.base_payload.ptr, .base_len = packet.base_payload.len, .offload = packet.fixup_plan.offload };
+	SeedContext context = { .base = packet.base_payload, .offload = packet.fixup_plan.offload };
 	uint iterated = dpdk::rte_mempool_obj_iter(pool, &seed_mbuf_base_payload, &context);
 	if (iterated == 0 || context.seeded != iterated) {
 		errors.push("failed to seed packet base payload into the mbuf pool");
@@ -602,7 +601,7 @@ fn ulong counter_delta(ulong current, ulong previous) @private {
 	return current >= previous ? current - previous : 0;
 }
 
-fn void print_live_stats(WorkerContext* tx_ctxs, usz tx_count, RxWorkerContext* rx_ctxs, usz rx_count, ushort port_id, usz packet_len, ushort batch_size, RunOptions options, LiveStatsState* state, long now) @private {
+fn void print_live_stats(WorkerContext[] tx_ctxs, RxWorkerContext[] rx_ctxs, ushort port_id, usz packet_len, ushort batch_size, RunOptions options, LiveStatsState* state, long now) @private {
 	@pool() {
 		ulong elapsed = (ulong)(now - state.start);
 		double sample_seconds = (double)(now - state.last);
@@ -613,7 +612,7 @@ fn void print_live_stats(WorkerContext* tx_ctxs, usz tx_count, RxWorkerContext* 
 		ulong total_tx_attempted = 0;
 		ulong total_tx_delta = 0;
 		ulong[RUNTIME_MAX_LCORES] tx_deltas;
-		for (usz i = 0; i < tx_count; i++) {
+		for (usz i = 0; i < tx_ctxs.len; i++) {
 			WorkerStatsView worker = make_worker_stats_view(&tx_ctxs[i]);
 			ulong delta = counter_delta(worker.tx_sent, state.previous_tx_sent[i]);
 			state.previous_tx_sent[i] = worker.tx_sent;
@@ -627,7 +626,7 @@ fn void print_live_stats(WorkerContext* tx_ctxs, usz tx_count, RxWorkerContext* 
 		ulong total_rx_bytes = 0;
 		ulong total_rx_delta = 0;
 		ulong[RUNTIME_MAX_LCORES] rx_deltas;
-		for (usz i = 0; i < rx_count; i++) {
+		for (usz i = 0; i < rx_ctxs.len; i++) {
 			RxWorkerStatsView worker = make_rx_worker_stats_view(&rx_ctxs[i]);
 			ulong delta = counter_delta(worker.rx_received, state.previous_rx_received[i]);
 			state.previous_rx_received[i] = worker.rx_received;
@@ -654,14 +653,14 @@ fn void print_live_stats(WorkerContext* tx_ctxs, usz tx_count, RxWorkerContext* 
 		io::printn("FlowForge live stats\n");
 		io::printfn("elapsed: %s", stats_format::format_elapsed_seconds(elapsed));
 		io::printfn("packet_len: %d bytes", packet_len);
-		io::printfn("tx_queues: %d    rx_queues: %d", tx_count, rx_count);
+		io::printfn("tx_queues: %d    rx_queues: %d", tx_ctxs.len, rx_ctxs.len);
 		io::printfn("tx_batch_size: %d    clone_count: %d", batch_size, options.clone_count);
 		io::printfn("split: %s      once: %s\n", options.split ? "on" : "off", options.once ? "on" : "off");
 
-		if (tx_count > 0) {
+		if (tx_ctxs.len > 0) {
 			io::printn("tx workers:");
 			io::printfn("  %-4s%-8s%-8s%-14s%-14s%-14s%-12s%s", "id", "lcore", "queue", "flows", "sent", "attempted", "pps", "bps");
-			for (usz i = 0; i < tx_count; i++) {
+			for (usz i = 0; i < tx_ctxs.len; i++) {
 				WorkerStatsView worker = make_worker_stats_view(&tx_ctxs[i]);
 				double worker_pps = (double)tx_deltas[i] / sample_seconds;
 				double worker_bps = worker_pps * (double)packet_len * 8.0;
@@ -681,10 +680,10 @@ fn void print_live_stats(WorkerContext* tx_ctxs, usz tx_count, RxWorkerContext* 
 				stats_format::format_human_rate(total_tx_bps, "bps"));
 		}
 
-		if (rx_count > 0) {
+		if (rx_ctxs.len > 0) {
 			io::printn("rx workers:");
 			io::printfn("  %-4s%-8s%-8s%-14s%-14s%-12s%-12s%s", "id", "lcore", "queue", "received", "bytes", "pps", "bps", "imiss");
-			for (usz i = 0; i < rx_count; i++) {
+			for (usz i = 0; i < rx_ctxs.len; i++) {
 				RxWorkerStatsView worker = make_rx_worker_stats_view(&rx_ctxs[i]);
 				double worker_pps = (double)rx_deltas[i] / sample_seconds;
 				double worker_bps = worker_pps * (double)packet_len * 8.0;
@@ -709,8 +708,8 @@ fn void print_live_stats(WorkerContext* tx_ctxs, usz tx_count, RxWorkerContext* 
 	};
 }
 
-fn bool wait_for_all(uint* lcores, WorkerContext* tx_ctxs, usz tx_launched, RxWorkerContext* rx_ctxs, usz rx_launched, ushort port_id, usz packet_len, ushort batch_size, RunOptions options, List{String}* errors) @private {
-	usz total = tx_launched + rx_launched;
+fn bool wait_for_all(uint[] lcores, WorkerContext[] tx_ctxs, RxWorkerContext[] rx_ctxs, ushort port_id, usz packet_len, ushort batch_size, RunOptions options, List{String}* errors) @private {
+	usz total = lcores.len;
 	bool ok = true;
 
 	if (!options.stats_interval_seconds.has_value) {
@@ -737,7 +736,7 @@ fn bool wait_for_all(uint* lcores, WorkerContext* tx_ctxs, usz tx_launched, RxWo
 	while (joined_count < total) {
 		long now = time(null);
 		if (now >= state.next) {
-			print_live_stats(tx_ctxs, tx_launched, rx_ctxs, rx_launched, port_id, packet_len, batch_size, options, &state, now);
+			print_live_stats(tx_ctxs, rx_ctxs, port_id, packet_len, batch_size, options, &state, now);
 			while (state.next <= now) state.next += (long)interval;
 		}
 
@@ -867,7 +866,7 @@ fn bool run_traffic(ushort port_id, Mempool* mbuf_pool, PacketGenerator* generat
 
 	if (!ok) runtime_stop_requested = true;
 
-	ok = wait_for_all(&used_lcores[0], &tx_ctxs[0], tx_launched, &rx_ctxs[0], rx_launched, port_id, packet.base_payload.len, batch_size, options, errors) && ok;
+	ok = wait_for_all(used_lcores[:tx_launched + rx_launched], tx_ctxs[:tx_launched], rx_ctxs[:rx_launched], port_id, packet.base_payload.len, batch_size, options, errors) && ok;
 
 	for (usz i = 0; i < tx_launched; i++) {
 		result.tx_attempted += tx_ctxs[i].tx_attempted;
