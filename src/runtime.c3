@@ -7,6 +7,7 @@ import flowforge::serializer;
 import std::collections::list;
 import std::collections::map;
 import std::collections::maybe;
+import std::collections::result;
 
 alias MaybeULong = Maybe{ulong};
 
@@ -100,9 +101,9 @@ fn Runtime runtime_with_default() {
 
 fn Runtime runtime_with_registry(Registry* registry) => { .registry = registry };
 
-fn String[]? split_dpdk_args(String args, String* error) {
-	List{String} result;
-	result.tinit();
+fn result::Result{String[], String} split_dpdk_args(String args) {
+	List{String} parts;
+	parts.tinit();
 	DString current;
 	current.tinit();
 	char quote = 0;
@@ -132,7 +133,7 @@ fn String[]? split_dpdk_args(String args, String* error) {
 		}
 		if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
 			if (current.len()) {
-				result.push(current.str_view().copy(tmem));
+				parts.push(current.str_view().copy(tmem));
 				current.clear();
 			}
 			continue;
@@ -140,18 +141,12 @@ fn String[]? split_dpdk_args(String args, String* error) {
 		current.append_char(c);
 	}
 
-	if (escaping) {
-		*error = "DPDK_ARGS ends with an unfinished escape";
-		return BUILD_ERR~;
-	}
-	if (quote != 0) {
-		*error = "DPDK_ARGS contains an unterminated quote";
-		return BUILD_ERR~;
-	}
+	if (escaping) return result::err("DPDK_ARGS ends with an unfinished escape");
+	if (quote != 0) return result::err("DPDK_ARGS contains an unterminated quote");
 	if (current.len()) {
-		result.push(current.str_view().copy(tmem));
+		parts.push(current.str_view().copy(tmem));
 	}
-	return result.to_tarray();
+	return result::ok(parts.to_tarray());
 }
 
 fn ulong? positive_integer_var(Variable* variable, String name, List{String}* errors) {
@@ -216,12 +211,11 @@ fn Config? build_config(Program program, Result* result, RunOptions options) {
 	} else if (dpdk_args_value.kind != ScalarKind.STRING) {
 		result.errors.push("variable 'DPDK_ARGS' must be a string expression");
 	} else {
-		String split_error = "";
-		String[]? args = split_dpdk_args(dpdk_args_value.string_val, &split_error);
-		if (catch args) {
-			result.errors.push(split_error);
+		result::Result{String[], String} args = split_dpdk_args(dpdk_args_value.string_val);
+		if (!args.is_ok) {
+			result.errors.push(args.error);
 		} else {
-			config.dpdk_args = args;
+			config.dpdk_args = args.value;
 		}
 	}
 

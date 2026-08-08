@@ -3,6 +3,7 @@ import flowforge::constructor;
 import flowforge::registry;
 import flowforge::serializer;
 import flowforge::testutil;
+import std::collections::result;
 
 fn BuildResult build_default(String input) {
 	Registry reg = registry::create_default_registry();
@@ -239,8 +240,7 @@ fn void test_modifier_applies_list_index_to_payload() @test {
 	PayloadFieldModifier* modifier = find_modifier(result, "IP", "src");
 	assert(modifier != null);
 
-	String error = "";
-	assert(modifier.apply(buf[..], 2, &error));
+	assert(modifier.apply(buf[..], 2).is_ok);
 	assert(byte_at(buf[..], 12) == 10);
 	assert(byte_at(buf[..], 13) == 0);
 	assert(byte_at(buf[..], 14) == 1);
@@ -256,9 +256,9 @@ fn void test_modifier_rejects_out_of_range_index() @test {
 	PayloadFieldModifier* modifier = find_modifier(result, "IP", "src");
 	assert(modifier != null);
 
-	String error = "";
-	assert(!modifier.apply(buf[..], 2, &error));
-	assert(error.contains("out of range"));
+	Result{bool, String} applied = modifier.apply(buf[..], 2);
+	assert(!applied.is_ok);
+	assert(applied.error.contains("out of range"));
 }
 
 fn void test_modified_payload_can_be_fixed_up_again() @test {
@@ -273,8 +273,7 @@ fn void test_modified_payload_can_be_fixed_up_again() @test {
 	PayloadFieldModifier* modifier = find_modifier(serialize, "IP", "src");
 	assert(modifier != null);
 
-	String error = "";
-	assert(modifier.apply(buf[..], 2, &error));
+	assert(modifier.apply(buf[..], 2).is_ok);
 	FixupResult fixup = serializer::fixup_packet(built.packet, &reg, buf[..], serialize.packet_len);
 
 	assert(fixup.ok);
@@ -299,8 +298,7 @@ fn void test_planned_software_fixup_can_be_reused_after_range_mutation() @test {
 	PayloadFieldModifier* modifier = find_modifier(serialize, "IP", "src");
 	assert(modifier != null);
 
-	String error = "";
-	assert(modifier.apply(buf[..], 2, &error));
+	assert(modifier.apply(buf[..], 2).is_ok);
 	FixupResult fixup = serializer::apply_fixup_plan(buf[..], plan.plan);
 
 	assert(fixup.ok);
@@ -327,8 +325,7 @@ fn void test_planned_hardware_fixup_reuses_offload_metadata_and_refreshes_pseudo
 	PayloadFieldModifier* modifier = find_modifier(serialize, "IP", "src");
 	assert(modifier != null);
 
-	String error = "";
-	assert(modifier.apply(buf[..], 2, &error));
+	assert(modifier.apply(buf[..], 2).is_ok);
 	FixupResult fixup = serializer::apply_fixup_plan(buf[..], plan.plan);
 
 	assert(fixup.ok);
@@ -365,9 +362,10 @@ fn void test_checksum_only_fixup_refreshes_seed_without_rewriting_lengths() @tes
 	set_u16(buf[..], 16, 0xaaaa);
 	set_u16(buf[..], 38, 0xbbbb);
 
-	String error = "";
-	assert(modifier.apply(buf[..], 2, &error));
-	FixupResult fixup = serializer::apply_checksum_fixup_plan(buf[..], plan.plan);
+	assert(modifier.apply(buf[..], 2).is_ok);
+	uint? delta = modifier.ipv4_pseudo_delta(plan.plan, 2);
+	if (catch delta) assert(false);
+	FixupResult fixup = serializer::apply_checksum_fixup_plan(buf[..], plan.plan, delta);
 
 	assert(fixup.ok);
 	assert(u16_at(buf[..], 16) == 0xaaaa);

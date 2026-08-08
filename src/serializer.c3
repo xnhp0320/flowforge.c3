@@ -5,6 +5,7 @@ import flowforge::registry;
 import flowforge::value;
 import std::collections::list;
 import std::collections::maybe;
+import std::collections::result;
 
 faultdef SERIALIZE_ERR, NO_MODIFIER, OUT_OF_RANGE, HEADER_NOT_FOUND;
 
@@ -361,38 +362,34 @@ fn void write_modifier_value(PayloadFieldModifier* modifier, char[] payload, ulo
 	}
 }
 
-fn bool PayloadFieldModifier.apply(&self, char[] payload, ulong value_index, String* error) {
+fn Result{bool, String} PayloadFieldModifier.apply(&self, char[] payload, ulong value_index) {
 	if (self.bit_width > usz::max - self.bit_offset || (self.bit_offset + self.bit_width + 7) / 8 > payload.len) {
-		*error = string::tformat("payload is too small for modifier '%s.%s'", self.protocol, self.field);
-		return false;
+		return result::err(string::tformat("payload is too small for modifier '%s.%s'", self.protocol, self.field));
 	}
 
 	switch (self.values_kind) {
 		case UINT_RANGES:
 			UIntRangeAt? found = uint_range_at_index(self.uint_ranges, value_index);
 			if (catch found) {
-				*error = string::tformat("value index %d is out of range for modifier '%s.%s'", value_index, self.protocol, self.field);
-				return false;
+				return result::err(string::tformat("value index %d is out of range for modifier '%s.%s'", value_index, self.protocol, self.field));
 			}
 			write_modifier_value(self, payload, found.range.first + found.offset);
-			return true;
+			return result::ok(true);
 		case IPV4_RANGES:
 			Ipv4RangeAt? found = ipv4_range_at_index(self.ipv4_ranges, value_index);
 			if (catch found) {
-				*error = string::tformat("value index %d is out of range for modifier '%s.%s'", value_index, self.protocol, self.field);
-				return false;
+				return result::err(string::tformat("value index %d is out of range for modifier '%s.%s'", value_index, self.protocol, self.field));
 			}
 			write_modifier_value(self, payload, (ulong)(found.range.first + (uint)found.offset));
-			return true;
+			return result::ok(true);
 		case IPV6_RANGES:
 			Ipv6RangeAt? found = ipv6_range_at_index(self.ipv6_ranges, value_index);
 			if (catch found) {
-				*error = string::tformat("value index %d is out of range for modifier '%s.%s'", value_index, self.protocol, self.field);
-				return false;
+				return result::err(string::tformat("value index %d is out of range for modifier '%s.%s'", value_index, self.protocol, self.field));
 			}
 			IPv6 ip = add_ipv6_offset(found.range.first, found.offset);
 			write_modifier_value(self, payload, 0, ip);
-			return true;
+			return result::ok(true);
 	}
 }
 
@@ -490,45 +487,39 @@ fn FieldSpec* find_field_spec(HeaderSpec* header, String name) {
 
 // --- field/value serialization -----------------------------------------
 
-fn ulong? first_integer_value(ConstructorValue value, String field_name, String* error) {
-	if (value.kind == ConstructorValueKind.UINT) return value.uint_val;
+fn Result{ulong, String} first_integer_value(ConstructorValue value, String field_name) {
+	if (value.kind == ConstructorValueKind.UINT) return result::ok(value.uint_val);
 	if (value.kind == ConstructorValueKind.UINT_RANGES) {
 		if (value.uint_ranges_val.len == 0) {
-			*error = string::tformat("field '%s' has an empty integer range list", field_name);
-			return SERIALIZE_ERR~;
+			return result::err(string::tformat("field '%s' has an empty integer range list", field_name));
 		}
-		return value.uint_ranges_val[0].first;
+		return result::ok(value.uint_ranges_val[0].first);
 	}
-	*error = string::tformat("field '%s' is not an integer value", field_name);
-	return SERIALIZE_ERR~;
+	return result::err(string::tformat("field '%s' is not an integer value", field_name));
 }
 
-fn IPv4? first_ipv4_value(ConstructorValue value, String field_name, String* error) {
-	if (value.kind == ConstructorValueKind.IPV4) return value.ipv4_val;
-	if (value.kind == ConstructorValueKind.IPV4_RANGE) return value.ipv4_range_val.first;
+fn Result{IPv4, String} first_ipv4_value(ConstructorValue value, String field_name) {
+	if (value.kind == ConstructorValueKind.IPV4) return result::ok(value.ipv4_val);
+	if (value.kind == ConstructorValueKind.IPV4_RANGE) return result::ok(value.ipv4_range_val.first);
 	if (value.kind == ConstructorValueKind.IPV4_RANGES) {
 		if (value.ipv4_ranges_val.len == 0) {
-			*error = string::tformat("field '%s' has an empty ipv4 range list", field_name);
-			return SERIALIZE_ERR~;
+			return result::err(string::tformat("field '%s' has an empty ipv4 range list", field_name));
 		}
-		return value.ipv4_ranges_val[0].first;
+		return result::ok(value.ipv4_ranges_val[0].first);
 	}
-	*error = string::tformat("field '%s' is not an ipv4 value", field_name);
-	return SERIALIZE_ERR~;
+	return result::err(string::tformat("field '%s' is not an ipv4 value", field_name));
 }
 
-fn IPv6? first_ipv6_value(ConstructorValue value, String field_name, String* error) {
-	if (value.kind == ConstructorValueKind.IPV6) return value.ipv6_val;
-	if (value.kind == ConstructorValueKind.IPV6_RANGE) return value.ipv6_range_val.first;
+fn Result{IPv6, String} first_ipv6_value(ConstructorValue value, String field_name) {
+	if (value.kind == ConstructorValueKind.IPV6) return result::ok(value.ipv6_val);
+	if (value.kind == ConstructorValueKind.IPV6_RANGE) return result::ok(value.ipv6_range_val.first);
 	if (value.kind == ConstructorValueKind.IPV6_RANGES) {
 		if (value.ipv6_ranges_val.len == 0) {
-			*error = string::tformat("field '%s' has an empty ipv6 range list", field_name);
-			return SERIALIZE_ERR~;
+			return result::err(string::tformat("field '%s' has an empty ipv6 range list", field_name));
 		}
-		return value.ipv6_ranges_val[0].first;
+		return result::ok(value.ipv6_ranges_val[0].first);
 	}
-	*error = string::tformat("field '%s' is not an ipv6 value", field_name);
-	return SERIALIZE_ERR~;
+	return result::err(string::tformat("field '%s' is not an ipv6 value", field_name));
 }
 
 fn bool serialize_field(FieldSpec* spec, FieldConstructor field, usz bit_offset, char[] payload, List{String}* errors) {
@@ -542,33 +533,30 @@ fn bool serialize_field(FieldSpec* spec, FieldConstructor field, usz bit_offset,
 		return true;
 	}
 	if (type == "ipv4" || type == "ipv4_range" || type == "ipv4_ranges") {
-		String err = "";
-		IPv4? ip = first_ipv4_value(field.value, field.name, &err);
-		if (catch ip) {
-			errors.push(err);
+		Result{IPv4, String} ip = first_ipv4_value(field.value, field.name);
+		if (!ip.is_ok) {
+			errors.push(ip.error);
 			return false;
 		}
-		write_bytes(payload, bit_offset, ip.bytes[..]);
+		write_bytes(payload, bit_offset, ip.value.bytes[..]);
 		return true;
 	}
 	if (type == "ipv6" || type == "ipv6_range" || type == "ipv6_ranges") {
-		String err = "";
-		IPv6? ip = first_ipv6_value(field.value, field.name, &err);
-		if (catch ip) {
-			errors.push(err);
+		Result{IPv6, String} ip = first_ipv6_value(field.value, field.name);
+		if (!ip.is_ok) {
+			errors.push(ip.error);
 			return false;
 		}
-		write_bytes(payload, bit_offset, ip.bytes[..]);
+		write_bytes(payload, bit_offset, ip.value.bytes[..]);
 		return true;
 	}
 
-	String err = "";
-	ulong? integer = first_integer_value(field.value, field.name, &err);
-	if (catch integer) {
-		errors.push(err);
+	Result{ulong, String} integer = first_integer_value(field.value, field.name);
+	if (!integer.is_ok) {
+		errors.push(integer.error);
 		return false;
 	}
-	write_bits(payload, bit_offset, spec.bit_width, integer);
+	write_bits(payload, bit_offset, spec.bit_width, integer.value);
 	return true;
 }
 
