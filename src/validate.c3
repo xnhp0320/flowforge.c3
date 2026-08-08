@@ -67,7 +67,7 @@ fn bool is_bit_ranges_type(String type_name) {
 
 fn usz? bit_width_for_type(String type_name) {
 	if (is_bit_ranges_type(type_name)) {
-		ulong? width = type_name[1..type_name.len - 8].to_ulong();
+		ulong? width = type_name[1..^8].to_ulong();
 		if (catch width) return UNKNOWN_TYPE~;
 		if (width < 1 || width > 64) return UNKNOWN_TYPE~;
 		return (usz)width;

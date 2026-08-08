@@ -32,7 +32,7 @@ fn Result{String, String} Parser.parse_string_value(&self, String raw) {
 		return result::err(string::tformat("invalid string literal %s", raw));
 	}
 	if (raw.len == 2) return result::ok("".copy(tmem));
-	String content = raw[1..raw.len - 2];
+	String content = raw[1..^2];
 	DString out = dstring::temp_with_capacity(content.len);
 
 	for (usz i = 0; i < content.len; i++) {
