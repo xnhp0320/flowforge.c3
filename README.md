@@ -66,9 +66,10 @@ Lexer → Parser → Checker → Constructor → Serializer → Generator → Pc
   check → construct → serialize → fixup once to build a `GeneratedPacket`
   (base payload, range modifiers, fixup plan) and plans the total flow
   count from the range fields (capped by an optional packet count).
-  `payload_for_flow()` / `apply_flow()` then patch a specific flow index
-  into a payload buffer (indexing each range modifier and re-running the
-  fixup plan), so millions of flows expand without re-serializing.
+  `GeneratedPacket.payload_for_flow()` / `apply_flow()` then patch a
+  specific flow index into a payload buffer (indexing each range
+  modifier and re-running the fixup plan), so millions of flows expand
+  without re-serializing.
 - `src/pcap.c3` — `PcapWriter` appends a classic little-endian pcap
   header and per-packet records (Ethernet link type) to a byte buffer.
 - `src/main.c3` — the `ffg` CLI wires file mode together: `-w <out.pcap>`

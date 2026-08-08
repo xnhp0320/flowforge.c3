@@ -291,7 +291,7 @@ fn int run_file_mode(Packet packet, generator::MaybeCount count, String output_p
 	for (ulong i = 0; i < planned; i++) {
 		errors.clear();
 		mem::copy(payload.ptr, result.packet.base_payload.ptr, (sz)packet_len);
-		if (!gen.apply_flow(&result.packet, i, payload, &errors)) {
+		if (!result.packet.apply_flow(i, payload, &errors)) {
 			foreach (e : errors) io::eprintfn("ERROR: %s", e);
 			return 1;
 		}
