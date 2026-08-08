@@ -1,26 +1,21 @@
 module flowforge::lexer;
 import flowforge::token;
+import std::collections::result;
 import std::core::ascii;
-
-faultdef LEX_ERROR;
 
 struct Lexer {
 	String source;
 	usz pos;
 	Token current;
-	String last_error;
 }
 
 fn void Lexer.init(&self, String source) {
 	self.source = source;
 	self.pos = 0;
-	self.last_error = "";
 	self.current = { .type = TokenType.END_OF_FILE, .lexeme = source[source.len..], .position = source.len };
 }
 
 fn Token Lexer.peek(&self) => self.current;
-
-fn String Lexer.last_error_msg(&self) => self.last_error;
 
 fn bool is_identifier_start(char c) => c.is_alpha() || c == '_';
 fn bool is_identifier_continue(char c) => c.is_alnum() || c == '_';
@@ -42,22 +37,22 @@ fn void Lexer.skip_whitespace(&self) {
 	}
 }
 
-fn Token? Lexer.lex_identifier(&self) {
+fn Result{Token, String} Lexer.lex_identifier(&self) {
 	usz start = self.pos;
 	while (self.pos < self.source.len && is_identifier_continue(self.source[self.pos])) {
 		self.pos++;
 	}
-	return { .type = TokenType.IDENTIFIER, .lexeme = lexeme_range(self.source, start, self.pos), .position = start };
+	return result::ok({ .type = TokenType.IDENTIFIER, .lexeme = lexeme_range(self.source, start, self.pos), .position = start });
 }
 
-fn Token? Lexer.lex_string(&self) {
+fn Result{Token, String} Lexer.lex_string(&self) {
 	usz start = self.pos;
 	self.pos++;
 	while (self.pos < self.source.len) {
 		char c = self.source[self.pos];
 		if (c == '"') {
 			self.pos++;
-			return { .type = TokenType.STRING_LITERAL, .lexeme = lexeme_range(self.source, start, self.pos), .position = start };
+			return result::ok({ .type = TokenType.STRING_LITERAL, .lexeme = lexeme_range(self.source, start, self.pos), .position = start });
 		}
 		if (c == '\\' && self.pos + 1 < self.source.len) {
 			self.pos += 2;
@@ -66,45 +61,42 @@ fn Token? Lexer.lex_string(&self) {
 			self.pos++;
 		}
 	}
-	self.last_error = "unterminated string literal";
-	return LEX_ERROR~;
+	return result::err("unterminated string literal");
 }
 
-fn Token? Lexer.lex_number(&self) {
+fn Result{Token, String} Lexer.lex_number(&self) {
 	usz start = self.pos;
 	if (self.pos < self.source.len && self.source[self.pos] == '0') {
 		self.pos++;
 		if (self.pos < self.source.len && (self.source[self.pos] == 'x' || self.source[self.pos] == 'X')) {
 			self.pos++;
 			if (self.pos >= self.source.len || !self.source[self.pos].is_xdigit()) {
-				self.last_error = "invalid hex literal";
-				return LEX_ERROR~;
+				return result::err("invalid hex literal");
 			}
 			while (self.pos < self.source.len && self.source[self.pos].is_xdigit()) {
 				self.pos++;
 			}
-			return { .type = TokenType.INTEGER_LITERAL, .lexeme = lexeme_range(self.source, start, self.pos), .position = start };
+			return result::ok({ .type = TokenType.INTEGER_LITERAL, .lexeme = lexeme_range(self.source, start, self.pos), .position = start });
 		}
 		if (self.pos < self.source.len && (self.source[self.pos] == 'b' || self.source[self.pos] == 'B')) {
 			self.pos++;
 			if (self.pos >= self.source.len || !is_binary_digit(self.source[self.pos])) {
-				self.last_error = "invalid binary literal";
-				return LEX_ERROR~;
+				return result::err("invalid binary literal");
 			}
 			while (self.pos < self.source.len && is_binary_digit(self.source[self.pos])) {
 				self.pos++;
 			}
-			return { .type = TokenType.INTEGER_LITERAL, .lexeme = lexeme_range(self.source, start, self.pos), .position = start };
+			return result::ok({ .type = TokenType.INTEGER_LITERAL, .lexeme = lexeme_range(self.source, start, self.pos), .position = start });
 		}
 	}
 	while (self.pos < self.source.len && self.source[self.pos].is_digit()) {
 		self.pos++;
 	}
-	if (self.pos == start) return LEX_ERROR~;
-	return { .type = TokenType.INTEGER_LITERAL, .lexeme = lexeme_range(self.source, start, self.pos), .position = start };
+	if (self.pos == start) return result::err("invalid number literal");
+	return result::ok({ .type = TokenType.INTEGER_LITERAL, .lexeme = lexeme_range(self.source, start, self.pos), .position = start });
 }
 
-fn Token? Lexer.lex_symbol(&self) {
+fn Result{Token, String} Lexer.lex_symbol(&self) {
 	usz start = self.pos;
 	char c = self.source[self.pos];
 	TokenType type;
@@ -115,48 +107,44 @@ fn Token? Lexer.lex_symbol(&self) {
 		case ',': type = TokenType.COMMA; break;
 		case '/': type = TokenType.SLASH; break;
 		case ':': type = TokenType.COLON; break;
-		default: return LEX_ERROR~;
+		default: return result::err(string::tformat("unexpected character: %c", c));
 	}
 	self.pos++;
-	return { type, lexeme_range(self.source, start, self.pos), start };
+	return result::ok({ type, lexeme_range(self.source, start, self.pos), start });
 }
 
-fn Token? Lexer.next(&self) {
+fn Result{Token, String} Lexer.next(&self) {
 	self.skip_whitespace();
 	if (self.pos >= self.source.len) {
 		self.current = { .type = TokenType.END_OF_FILE, .lexeme = self.source[self.source.len..], .position = self.source.len };
-		return self.current;
+		return result::ok(self.current);
 	}
 
 	char c = self.source[self.pos];
-	Token? result;
+	Result{Token, String} tok;
 
 	if (c == '-' && self.pos + 1 < self.source.len && self.source[self.pos + 1].is_digit()) {
 		usz neg_start = self.pos;
 		self.pos++;
-		result = self.lex_number();
-		if (catch result) return LEX_ERROR~;
-		result.lexeme = lexeme_range(self.source, neg_start, self.pos);
-		result.position = neg_start;
+		tok = self.lex_number();
+		if (!tok.is_ok) return tok;
+		tok.value.lexeme = lexeme_range(self.source, neg_start, self.pos);
+		tok.value.position = neg_start;
 	}
 	else if (c == '"') {
-		result = self.lex_string();
+		tok = self.lex_string();
 	}
 	else if (c.is_digit()) {
-		result = self.lex_number();
+		tok = self.lex_number();
 	}
 	else if (is_identifier_start(c)) {
-		result = self.lex_identifier();
+		tok = self.lex_identifier();
 	}
 	else {
-		result = self.lex_symbol();
-		if (catch result) {
-			self.last_error = string::tformat("unexpected character: %c", c);
-			return LEX_ERROR~;
-		}
+		tok = self.lex_symbol();
 	}
 
-	if (catch result) return LEX_ERROR~;
-	self.current = result;
-	return result;
+	if (!tok.is_ok) return tok;
+	self.current = tok.value;
+	return tok;
 }
