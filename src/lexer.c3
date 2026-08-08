@@ -19,7 +19,6 @@ fn Token Lexer.peek(&self) => self.current;
 
 fn bool is_identifier_start(char c) => c.is_alpha() || c == '_';
 fn bool is_identifier_continue(char c) => c.is_alnum() || c == '_';
-fn bool is_binary_digit(char c) => c == '0' || c == '1';
 
 // C3 slices are inclusive on both ends; end_exclusive is one past the last character.
 fn String lexeme_range(String source, usz start, usz end_exclusive) {
@@ -30,10 +29,8 @@ fn String lexeme_range(String source, usz start, usz end_exclusive) {
 fn void Lexer.skip_whitespace(&self) {
 	while (self.pos < self.source.len) {
 		char c = self.source[self.pos];
-		if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
-			self.pos++;
-		}
-		else { break; }
+		if (!c.is_space()) break;
+		self.pos++;
 	}
 }
 
@@ -80,10 +77,10 @@ fn Result{Token, String} Lexer.lex_number(&self) {
 		}
 		if (self.pos < self.source.len && (self.source[self.pos] == 'b' || self.source[self.pos] == 'B')) {
 			self.pos++;
-			if (self.pos >= self.source.len || !is_binary_digit(self.source[self.pos])) {
+			if (self.pos >= self.source.len || !self.source[self.pos].is_bdigit()) {
 				return result::err("invalid binary literal");
 			}
-			while (self.pos < self.source.len && is_binary_digit(self.source[self.pos])) {
+			while (self.pos < self.source.len && self.source[self.pos].is_bdigit()) {
 				self.pos++;
 			}
 			return result::ok({ .type = TokenType.INTEGER_LITERAL, .lexeme = lexeme_range(self.source, start, self.pos), .position = start });
