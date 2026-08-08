@@ -7,6 +7,7 @@ import flowforge::serializer;
 import flowforge::value;
 import std::collections::list;
 import std::collections::maybe;
+import std::collections::result;
 
 faultdef GENERATE_ERR;
 
@@ -286,14 +287,14 @@ fn bool apply_flow_index(char[] payload, List{PayloadFieldModifier} modifiers, P
 	foreach (&m : modifiers) {
 		ulong value_index = remaining % m.value_count;
 		remaining /= m.value_count;
-		String err = "";
 		uint? delta = m.ipv4_pseudo_delta(fixup_plan, value_index);
 		if (catch delta) {
 			errors.push(string::tformat("value index %d is out of range for modifier '%s.%s'", value_index, m.protocol, m.field));
 			return false;
 		}
-		if (!m.apply(payload, value_index, &err)) {
-			errors.push(err);
+		Result{bool, String} applied = m.apply(payload, value_index);
+		if (!applied.is_ok) {
+			errors.push(applied.error);
 			return false;
 		}
 		*ipv4_pseudo_delta += delta;

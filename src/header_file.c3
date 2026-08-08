@@ -3,6 +3,7 @@ import flowforge::registry;
 import flowforge::cvalue;
 import flowforge::value;
 import std::collections::list;
+import std::collections::result;
 
 <* Result of loading user-defined headers from a definition file.
    The loader augments an existing Registry: it never replaces predefined
@@ -214,9 +215,9 @@ fn bool Loader.parse_header(&self) {
 
 		ConstructorValue? def = fi.default_value.get();
 		if (try def) {
-			String verr = "";
-			if (!registry::validate_constructor_value(ftype, def, &verr)) {
-				self.errors.push(string::tformat("line %d: invalid default for field '%s': %s", type_tok.line, fname, verr));
+			Result{bool, String} valid = registry::validate_constructor_value(ftype, def);
+			if (!valid.is_ok) {
+				self.errors.push(string::tformat("line %d: invalid default for field '%s': %s", type_tok.line, fname, valid.error));
 				header_ok = false;
 			}
 		}

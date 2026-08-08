@@ -1,6 +1,7 @@
 module flowforge::cvalue;
 import flowforge::value;
 import std::collections::list;
+import std::collections::result;
 
 faultdef PARSE_ERR;
 
@@ -57,29 +58,23 @@ fn ConstructorValue default_constructor_value_for_type(String type_name) {
 	return value::cv_uint(0);
 }
 
-<* Returns error string if the value does not fit; empty string means OK. *>
-fn bool validate_bit_value(long integer, usz bit_width, String* error) {
+fn Result{bool, String} validate_bit_value(long integer, usz bit_width) {
 	if (bit_width < 64) {
 		ulong max = (1UL << bit_width) - 1;
 		if (integer < 0 || (ulong)integer > max) {
-			*error = string::tformat("value %d does not fit in %d bits", integer, bit_width);
-			return false;
+			return result::err(string::tformat("value %d does not fit in %d bits", integer, bit_width));
 		}
-		return true;
+		return result::ok(true);
 	}
 	if (integer < 0) {
-		*error = string::tformat("negative value %d does not fit in 64 bits", integer);
-		return false;
+		return result::err(string::tformat("negative value %d does not fit in 64 bits", integer));
 	}
-	return true;
+	return result::ok(true);
 }
 
-fn ulong? parse_uint_value(String raw, usz bit_width, String* error) {
+fn Result{ulong, String} parse_uint_value(String raw, usz bit_width) {
 	String s = raw.trim();
-	if (!s.len) {
-		*error = "empty integer value";
-		return PARSE_ERR~;
-	}
+	if (!s.len) return result::err("empty integer value");
 	int base = 10;
 	if (s.starts_with("0x") || s.starts_with("0X")) {
 		base = 16;
@@ -89,62 +84,50 @@ fn ulong? parse_uint_value(String raw, usz bit_width, String* error) {
 		base = 2;
 		s = s[2..];
 	}
-	if (!s.len) {
-		*error = string::tformat("invalid integer value '%s'", raw);
-		return PARSE_ERR~;
-	}
+	if (!s.len) return result::err(string::tformat("invalid integer value '%s'", raw));
 	ulong? value = s.to_ulong(base);
-	if (catch value) {
-		*error = string::tformat("invalid integer value '%s'", raw);
-		return PARSE_ERR~;
-	}
+	if (catch value) return result::err(string::tformat("invalid integer value '%s'", raw));
 	if (bit_width < 64) {
 		ulong max = (1UL << bit_width) - 1;
 		if (value > max) {
-			*error = string::tformat("value %d does not fit in %d bits", value, bit_width);
-			return PARSE_ERR~;
+			return result::err(string::tformat("value %d does not fit in %d bits", value, bit_width));
 		}
 	}
-	return value;
+	return result::ok(value);
 }
 
-fn UIntRange? parse_uint_range(String raw, usz bit_width, String* error) {
+fn Result{UIntRange, String} parse_uint_range(String raw, usz bit_width) {
 	String s = raw.trim();
 	sz? dash = s.index_of_char('-');
 	if (try dash) {
-		ulong? left = parse_uint_value(s[..(usz)dash - 1], bit_width, error);
-		if (catch left) return PARSE_ERR~;
-		ulong? right = parse_uint_value(s[(usz)dash + 1..], bit_width, error);
-		if (catch right) return PARSE_ERR~;
-		if (left > right) {
-			*error = string::tformat("range start %d is greater than range end %d", left, right);
-			return PARSE_ERR~;
+		Result{ulong, String} left = parse_uint_value(s[..(usz)dash - 1], bit_width);
+		if (!left.is_ok) return result::err(left.error);
+		Result{ulong, String} right = parse_uint_value(s[(usz)dash + 1..], bit_width);
+		if (!right.is_ok) return result::err(right.error);
+		if (left.value > right.value) {
+			return result::err(string::tformat("range start %d is greater than range end %d", left.value, right.value));
 		}
-		return { .first = left, .last = right };
+		return result::ok({ .first = left.value, .last = right.value });
 	}
-	ulong? v = parse_uint_value(s, bit_width, error);
-	if (catch v) return PARSE_ERR~;
-	return { .first = v, .last = v };
+	Result{ulong, String} v = parse_uint_value(s, bit_width);
+	if (!v.is_ok) return result::err(v.error);
+	return result::ok({ .first = v.value, .last = v.value });
 }
 
-fn UIntRange[]? parse_uint_ranges(String raw, usz bit_width, String* error) {
+fn Result{UIntRange[], String} parse_uint_ranges(String raw, usz bit_width) {
 	String s = raw.trim();
 	if (!(s.len && s[0] == '[') && !s.ends_with("]")) {
-		UIntRange? range = parse_uint_range(s, bit_width, error);
-		if (catch range) return PARSE_ERR~;
+		Result{UIntRange, String} range = parse_uint_range(s, bit_width);
+		if (!range.is_ok) return result::err(range.error);
 		UIntRange[] one = mem::temp_array(UIntRange, 1);
-		one[0] = range;
-		return one;
+		one[0] = range.value;
+		return result::ok(one);
 	}
 	if (!(s.len && s[0] == '[') || !s.ends_with("]")) {
-		*error = string::tformat("malformed range list '%s'", raw);
-		return PARSE_ERR~;
+		return result::err(string::tformat("malformed range list '%s'", raw));
 	}
 	String content = s.len >= 2 ? s[1..s.len - 2] : "";
-	if (!content.trim().len) {
-		*error = "empty range list";
-		return PARSE_ERR~;
-	}
+	if (!content.trim().len) return result::err("empty range list");
 	List{UIntRange} ranges;
 	ranges.tinit();
 	usz start = 0;
@@ -159,39 +142,29 @@ fn UIntRange[]? parse_uint_ranges(String raw, usz bit_width, String* error) {
 			item = (usz)comma > start ? content[start..(usz)comma - 1].trim() : "";
 		}
 		if (!item.len) {
-			*error = string::tformat("empty range at index %d", index);
-			return PARSE_ERR~;
+			return result::err(string::tformat("empty range at index %d", index));
 		}
-		String item_err = "";
-		UIntRange? range = parse_uint_range(item, bit_width, &item_err);
-		if (catch range) {
-			*error = string::tformat("invalid range at index %d: %s", index, item_err);
-			return PARSE_ERR~;
+		Result{UIntRange, String} range = parse_uint_range(item, bit_width);
+		if (!range.is_ok) {
+			return result::err(string::tformat("invalid range at index %d: %s", index, range.error));
 		}
-		ranges.push(range);
+		ranges.push(range.value);
 		if (catch comma) break;
 		start = (usz)comma + 1;
 		index++;
 	}
-	return ranges.to_tarray();
+	return result::ok(ranges.to_tarray());
 }
 
-fn int? parse_prefix(String s, int max_prefix, String* error) {
+fn Result{int, String} parse_prefix(String s, int max_prefix) {
 	String t = s.trim();
-	if (!t.len) {
-		*error = "empty CIDR mask";
-		return PARSE_ERR~;
-	}
+	if (!t.len) return result::err("empty CIDR mask");
 	int? prefix = t.to_int();
-	if (catch prefix) {
-		*error = string::tformat("invalid CIDR mask '%s'", t);
-		return PARSE_ERR~;
-	}
+	if (catch prefix) return result::err(string::tformat("invalid CIDR mask '%s'", t));
 	if (prefix < 0 || prefix > max_prefix) {
-		*error = string::tformat("CIDR mask %d out of range [0,%d]", prefix, max_prefix);
-		return PARSE_ERR~;
+		return result::err(string::tformat("CIDR mask %d out of range [0,%d]", prefix, max_prefix));
 	}
-	return prefix;
+	return result::ok(prefix);
 }
 
 fn uint ipv4_to_u32(IPv4 ip) {
@@ -203,110 +176,82 @@ fn IPv4 ipv4_from_u32(uint v) {
 	return value::ipv4_from_bytes(bytes);
 }
 
-fn IPv4Range? parse_ipv4_range(String raw, String* error) {
+fn Result{IPv4Range, String} parse_ipv4_range(String raw) {
 	String s = raw.trim();
 	sz? slash = s.index_of_char('/');
 	if (try slash) {
 		String ip_part = s[..(usz)slash - 1];
 		IPv4? ip = value::ipv4_parse(ip_part);
-		if (catch ip) {
-			*error = string::tformat("invalid ipv4 address '%s'", ip_part);
-			return PARSE_ERR~;
-		}
-		int? prefix = parse_prefix(s[(usz)slash + 1..], 32, error);
-		if (catch prefix) return PARSE_ERR~;
-		uint mask = prefix == 0 ? 0 : ~(uint)0 << (32 - prefix);
+		if (catch ip) return result::err(string::tformat("invalid ipv4 address '%s'", ip_part));
+		Result{int, String} prefix = parse_prefix(s[(usz)slash + 1..], 32);
+		if (!prefix.is_ok) return result::err(prefix.error);
+		uint mask = prefix.value == 0 ? 0 : ~(uint)0 << (32 - prefix.value);
 		uint base = ipv4_to_u32(ip);
-		return { .first = ipv4_from_u32(base & mask), .last = ipv4_from_u32(base | ~mask) };
+		return result::ok({ .first = ipv4_from_u32(base & mask), .last = ipv4_from_u32(base | ~mask) });
 	}
 	sz? dash = s.index_of_char('-');
 	if (try dash) {
 		String left_str = s[..(usz)dash - 1].trim();
 		String right_str = s[(usz)dash + 1..].trim();
 		IPv4? left = value::ipv4_parse(left_str);
-		if (catch left) {
-			*error = string::tformat("invalid ipv4 address '%s'", left_str);
-			return PARSE_ERR~;
-		}
+		if (catch left) return result::err(string::tformat("invalid ipv4 address '%s'", left_str));
 		IPv4? right = value::ipv4_parse(right_str);
-		if (catch right) {
-			*error = string::tformat("invalid ipv4 address '%s'", right_str);
-			return PARSE_ERR~;
-		}
-		return { .first = left, .last = right };
+		if (catch right) return result::err(string::tformat("invalid ipv4 address '%s'", right_str));
+		return result::ok({ .first = left, .last = right });
 	}
 	IPv4? ip = value::ipv4_parse(s);
-	if (catch ip) {
-		*error = string::tformat("invalid ipv4 address '%s'", s);
-		return PARSE_ERR~;
-	}
-	return { .first = ip, .last = ip };
+	if (catch ip) return result::err(string::tformat("invalid ipv4 address '%s'", s));
+	return result::ok({ .first = ip, .last = ip });
 }
 
-fn IPv6Range? parse_ipv6_range(String raw, String* error) {
+fn Result{IPv6Range, String} parse_ipv6_range(String raw) {
 	String s = raw.trim();
 	sz? slash = s.index_of_char('/');
 	if (try slash) {
 		String ip_part = s[..(usz)slash - 1];
 		IPv6? ip = value::ipv6_parse(ip_part);
-		if (catch ip) {
-			*error = string::tformat("invalid ipv6 address '%s'", ip_part);
-			return PARSE_ERR~;
-		}
-		int? prefix = parse_prefix(s[(usz)slash + 1..], 128, error);
-		if (catch prefix) return PARSE_ERR~;
+		if (catch ip) return result::err(string::tformat("invalid ipv6 address '%s'", ip_part));
+		Result{int, String} prefix = parse_prefix(s[(usz)slash + 1..], 128);
+		if (!prefix.is_ok) return result::err(prefix.error);
 		char[16] first = ip.bytes;
 		char[16] last = ip.bytes;
-		for (int bit = prefix; bit < 128; bit++) {
+		for (int bit = prefix.value; bit < 128; bit++) {
 			usz byte = (usz)(bit / 8);
 			char mask = (char)(1u << (7 - bit % 8));
 			first[byte] = (char)(first[byte] & ~mask);
 			last[byte] = (char)(last[byte] | mask);
 		}
-		return { .first = value::ipv6_from_bytes(first), .last = value::ipv6_from_bytes(last) };
+		return result::ok({ .first = value::ipv6_from_bytes(first), .last = value::ipv6_from_bytes(last) });
 	}
 	sz? dash = s.index_of_char('-');
 	if (try dash) {
 		String left_str = s[..(usz)dash - 1].trim();
 		String right_str = s[(usz)dash + 1..].trim();
 		IPv6? left = value::ipv6_parse(left_str);
-		if (catch left) {
-			*error = string::tformat("invalid ipv6 address '%s'", left_str);
-			return PARSE_ERR~;
-		}
+		if (catch left) return result::err(string::tformat("invalid ipv6 address '%s'", left_str));
 		IPv6? right = value::ipv6_parse(right_str);
-		if (catch right) {
-			*error = string::tformat("invalid ipv6 address '%s'", right_str);
-			return PARSE_ERR~;
-		}
-		return { .first = left, .last = right };
+		if (catch right) return result::err(string::tformat("invalid ipv6 address '%s'", right_str));
+		return result::ok({ .first = left, .last = right });
 	}
 	IPv6? ip = value::ipv6_parse(s);
-	if (catch ip) {
-		*error = string::tformat("invalid ipv6 address '%s'", s);
-		return PARSE_ERR~;
-	}
-	return { .first = ip, .last = ip };
+	if (catch ip) return result::err(string::tformat("invalid ipv6 address '%s'", s));
+	return result::ok({ .first = ip, .last = ip });
 }
 
-fn IPv4Range[]? parse_ipv4_ranges(String raw, String* error) {
+fn Result{IPv4Range[], String} parse_ipv4_ranges(String raw) {
 	String s = raw.trim();
 	if (!(s.len && s[0] == '[') && !s.ends_with("]")) {
-		IPv4Range? range = parse_ipv4_range(s, error);
-		if (catch range) return PARSE_ERR~;
+		Result{IPv4Range, String} range = parse_ipv4_range(s);
+		if (!range.is_ok) return result::err(range.error);
 		IPv4Range[] one = mem::temp_array(IPv4Range, 1);
-		one[0] = range;
-		return one;
+		one[0] = range.value;
+		return result::ok(one);
 	}
 	if (!(s.len && s[0] == '[') || !s.ends_with("]")) {
-		*error = string::tformat("malformed range list '%s'", raw);
-		return PARSE_ERR~;
+		return result::err(string::tformat("malformed range list '%s'", raw));
 	}
 	String content = s.len >= 2 ? s[1..s.len - 2] : "";
-	if (!content.trim().len) {
-		*error = "empty range list";
-		return PARSE_ERR~;
-	}
+	if (!content.trim().len) return result::err("empty range list");
 	List{IPv4Range} ranges;
 	ranges.tinit();
 	usz start = 0;
@@ -321,41 +266,34 @@ fn IPv4Range[]? parse_ipv4_ranges(String raw, String* error) {
 			item = (usz)comma > start ? content[start..(usz)comma - 1].trim() : "";
 		}
 		if (!item.len) {
-			*error = string::tformat("empty range at index %d", index);
-			return PARSE_ERR~;
+			return result::err(string::tformat("empty range at index %d", index));
 		}
-		String item_err = "";
-		IPv4Range? range = parse_ipv4_range(item, &item_err);
-		if (catch range) {
-			*error = string::tformat("invalid range at index %d: %s", index, item_err);
-			return PARSE_ERR~;
+		Result{IPv4Range, String} range = parse_ipv4_range(item);
+		if (!range.is_ok) {
+			return result::err(string::tformat("invalid range at index %d: %s", index, range.error));
 		}
-		ranges.push(range);
+		ranges.push(range.value);
 		if (catch comma) break;
 		start = (usz)comma + 1;
 		index++;
 	}
-	return ranges.to_tarray();
+	return result::ok(ranges.to_tarray());
 }
 
-fn IPv6Range[]? parse_ipv6_ranges(String raw, String* error) {
+fn Result{IPv6Range[], String} parse_ipv6_ranges(String raw) {
 	String s = raw.trim();
 	if (!(s.len && s[0] == '[') && !s.ends_with("]")) {
-		IPv6Range? range = parse_ipv6_range(s, error);
-		if (catch range) return PARSE_ERR~;
+		Result{IPv6Range, String} range = parse_ipv6_range(s);
+		if (!range.is_ok) return result::err(range.error);
 		IPv6Range[] one = mem::temp_array(IPv6Range, 1);
-		one[0] = range;
-		return one;
+		one[0] = range.value;
+		return result::ok(one);
 	}
 	if (!(s.len && s[0] == '[') || !s.ends_with("]")) {
-		*error = string::tformat("malformed range list '%s'", raw);
-		return PARSE_ERR~;
+		return result::err(string::tformat("malformed range list '%s'", raw));
 	}
 	String content = s.len >= 2 ? s[1..s.len - 2] : "";
-	if (!content.trim().len) {
-		*error = "empty range list";
-		return PARSE_ERR~;
-	}
+	if (!content.trim().len) return result::err("empty range list");
 	List{IPv6Range} ranges;
 	ranges.tinit();
 	usz start = 0;
@@ -370,19 +308,16 @@ fn IPv6Range[]? parse_ipv6_ranges(String raw, String* error) {
 			item = (usz)comma > start ? content[start..(usz)comma - 1].trim() : "";
 		}
 		if (!item.len) {
-			*error = string::tformat("empty range at index %d", index);
-			return PARSE_ERR~;
+			return result::err(string::tformat("empty range at index %d", index));
 		}
-		String item_err = "";
-		IPv6Range? range = parse_ipv6_range(item, &item_err);
-		if (catch range) {
-			*error = string::tformat("invalid range at index %d: %s", index, item_err);
-			return PARSE_ERR~;
+		Result{IPv6Range, String} range = parse_ipv6_range(item);
+		if (!range.is_ok) {
+			return result::err(string::tformat("invalid range at index %d: %s", index, range.error));
 		}
-		ranges.push(range);
+		ranges.push(range.value);
 		if (catch comma) break;
 		start = (usz)comma + 1;
 		index++;
 	}
-	return ranges.to_tarray();
+	return result::ok(ranges.to_tarray());
 }

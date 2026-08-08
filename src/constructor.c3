@@ -5,6 +5,7 @@ import flowforge::value;
 import flowforge::cvalue;
 import std::collections::list;
 import std::collections::map;
+import std::collections::result;
 
 faultdef BUILD_ERR;
 
@@ -46,121 +47,95 @@ fn void BuildResult.tinit(&self) {
 	self.packet.tinit();
 }
 
-fn ScalarValue? scalar_attribute_value(Attribute* attr, String* error) {
+fn Result{ScalarValue, String} scalar_attribute_value(Attribute* attr) {
 	ScalarValue? value = ast::attr_scalar(attr);
-	if (catch value) {
-		*error = "requires a value";
-		return BUILD_ERR~;
-	}
-	if (value.kind == ScalarKind.PACKET) {
-		*error = "requires a scalar value";
-		return BUILD_ERR~;
-	}
-	return value;
+	if (catch value) return result::err("requires a value");
+	if (value.kind == ScalarKind.PACKET) return result::err("requires a scalar value");
+	return result::ok(value);
 }
 
-fn Packet? packet_attribute_value(Attribute* attr, String* error) {
+fn Result{Packet, String} packet_attribute_value(Attribute* attr) {
 	ScalarValue? value = ast::attr_scalar(attr);
-	if (catch value) {
-		*error = "requires a value";
-		return BUILD_ERR~;
-	}
-	if (value.kind != ScalarKind.PACKET) {
-		*error = "requires a packet value";
-		return BUILD_ERR~;
-	}
-	return value.packet_val;
+	if (catch value) return result::err("requires a value");
+	if (value.kind != ScalarKind.PACKET) return result::err("requires a packet value");
+	return result::ok(value.packet_val);
 }
 
-fn ConstructorValue? construct_value(String type_name, usz bit_width, ScalarValue value, String* error) {
+fn Result{ConstructorValue, String} construct_value(String type_name, usz bit_width, ScalarValue value) {
 	usz? range_bit_width = cvalue::bit_range_width_for_type_name(type_name);
 	if (try range_bit_width) {
 		if (value.kind == ScalarKind.INTEGER) {
-			if (!cvalue::validate_bit_value(value.int_val, range_bit_width, error)) return BUILD_ERR~;
-			return value::cv_uint((ulong)value.int_val);
+			Result{bool, String} fit = cvalue::validate_bit_value(value.int_val, range_bit_width);
+			if (!fit.is_ok) return result::err(fit.error);
+			return result::ok(value::cv_uint((ulong)value.int_val));
 		}
 		if (value.kind != ScalarKind.STRING) {
-			*error = "expected integer or string value";
-			return BUILD_ERR~;
+			return result::err("expected integer or string value");
 		}
 		String raw = value.string_val.trim();
 		if ((raw.len && raw[0] == '[') || raw.ends_with("]") || raw.contains("-")) {
-			UIntRange[]? ranges = cvalue::parse_uint_ranges(raw, range_bit_width, error);
-			if (catch ranges) return BUILD_ERR~;
-			return value::cv_uint_ranges(ranges);
+			Result{UIntRange[], String} ranges = cvalue::parse_uint_ranges(raw, range_bit_width);
+			if (!ranges.is_ok) return result::err(ranges.error);
+			return result::ok(value::cv_uint_ranges(ranges.value));
 		}
-		ulong? scalar = cvalue::parse_uint_value(raw, range_bit_width, error);
-		if (catch scalar) return BUILD_ERR~;
-		return value::cv_uint(scalar);
+		Result{ulong, String} scalar = cvalue::parse_uint_value(raw, range_bit_width);
+		if (!scalar.is_ok) return result::err(scalar.error);
+		return result::ok(value::cv_uint(scalar.value));
 	}
 
 	if (type_name.len && type_name[0] == 'b') {
 		if (value.kind != ScalarKind.INTEGER) {
-			*error = "expected integer value";
-			return BUILD_ERR~;
+			return result::err("expected integer value");
 		}
 		long integer = value.int_val;
-		if (integer < 0) {
-			*error = "negative integer value";
-			return BUILD_ERR~;
-		}
-		if (!cvalue::validate_bit_value(integer, bit_width, error)) return BUILD_ERR~;
-		return value::cv_uint((ulong)integer);
+		if (integer < 0) return result::err("negative integer value");
+		Result{bool, String} fit = cvalue::validate_bit_value(integer, bit_width);
+		if (!fit.is_ok) return result::err(fit.error);
+		return result::ok(value::cv_uint((ulong)integer));
 	}
 
 	if (value.kind != ScalarKind.STRING) {
-		*error = string::tformat("%s value must be a string", type_name);
-		return BUILD_ERR~;
+		return result::err(string::tformat("%s value must be a string", type_name));
 	}
 
 	String s = value.string_val;
 	if (type_name == "mac") {
 		MacAddr? mac = value::mac_parse(s);
-		if (catch mac) {
-			*error = string::tformat("invalid mac address '%s'", s);
-			return BUILD_ERR~;
-		}
-		return value::cv_mac(mac);
+		if (catch mac) return result::err(string::tformat("invalid mac address '%s'", s));
+		return result::ok(value::cv_mac(mac));
 	}
 	if (type_name == "ipv4") {
 		IPv4? ip = value::ipv4_parse(s);
-		if (catch ip) {
-			*error = string::tformat("invalid ipv4 address '%s'", s);
-			return BUILD_ERR~;
-		}
-		return value::cv_ipv4(ip);
+		if (catch ip) return result::err(string::tformat("invalid ipv4 address '%s'", s));
+		return result::ok(value::cv_ipv4(ip));
 	}
 	if (type_name == "ipv6") {
 		IPv6? ip = value::ipv6_parse(s);
-		if (catch ip) {
-			*error = string::tformat("invalid ipv6 address '%s'", s);
-			return BUILD_ERR~;
-		}
-		return value::cv_ipv6(ip);
+		if (catch ip) return result::err(string::tformat("invalid ipv6 address '%s'", s));
+		return result::ok(value::cv_ipv6(ip));
 	}
 	if (type_name == "ipv4_range") {
-		IPv4Range? range = cvalue::parse_ipv4_range(s, error);
-		if (catch range) return BUILD_ERR~;
-		return value::cv_ipv4_range(range);
+		Result{IPv4Range, String} range = cvalue::parse_ipv4_range(s);
+		if (!range.is_ok) return result::err(range.error);
+		return result::ok(value::cv_ipv4_range(range.value));
 	}
 	if (type_name == "ipv6_range") {
-		IPv6Range? range = cvalue::parse_ipv6_range(s, error);
-		if (catch range) return BUILD_ERR~;
-		return value::cv_ipv6_range(range);
+		Result{IPv6Range, String} range = cvalue::parse_ipv6_range(s);
+		if (!range.is_ok) return result::err(range.error);
+		return result::ok(value::cv_ipv6_range(range.value));
 	}
 	if (type_name == "ipv4_ranges") {
-		IPv4Range[]? ranges = cvalue::parse_ipv4_ranges(s, error);
-		if (catch ranges) return BUILD_ERR~;
-		return value::cv_ipv4_ranges(ranges);
+		Result{IPv4Range[], String} ranges = cvalue::parse_ipv4_ranges(s);
+		if (!ranges.is_ok) return result::err(ranges.error);
+		return result::ok(value::cv_ipv4_ranges(ranges.value));
 	}
 	if (type_name == "ipv6_ranges") {
-		IPv6Range[]? ranges = cvalue::parse_ipv6_ranges(s, error);
-		if (catch ranges) return BUILD_ERR~;
-		return value::cv_ipv6_ranges(ranges);
+		Result{IPv6Range[], String} ranges = cvalue::parse_ipv6_ranges(s);
+		if (!ranges.is_ok) return result::err(ranges.error);
+		return result::ok(value::cv_ipv6_ranges(ranges.value));
 	}
 
-	*error = string::tformat("unsupported constructor type '%s'", type_name);
-	return BUILD_ERR~;
+	return result::err(string::tformat("unsupported constructor type '%s'", type_name));
 }
 
 fn FieldConstructor* find_field(HeaderConstructor* header, String name) {
@@ -367,20 +342,18 @@ fn BuildResult build(Registry* registry, Packet packet) {
 				continue;
 			}
 
-			String err = "";
-			ScalarValue? attr_value = scalar_attribute_value(&attr, &err);
-			if (catch attr_value) {
-				result.errors.push(string::tformat("attribute '%s' in header '%s' %s", attr.name, header.protocol, err));
+			Result{ScalarValue, String} attr_value = scalar_attribute_value(&attr);
+			if (!attr_value.is_ok) {
+				result.errors.push(string::tformat("attribute '%s' in header '%s' %s", attr.name, header.protocol, attr_value.error));
 				continue;
 			}
 
-			String verr = "";
-			ConstructorValue? value = construct_value(field.type_name, field.bit_width, attr_value, &verr);
-			if (catch value) {
-				result.errors.push(string::tformat("invalid '%s' in header '%s': %s", attr.name, header.protocol, verr));
+			Result{ConstructorValue, String} value = construct_value(field.type_name, field.bit_width, attr_value.value);
+			if (!value.is_ok) {
+				result.errors.push(string::tformat("invalid '%s' in header '%s': %s", attr.name, header.protocol, value.error));
 				continue;
 			}
-			field_list.push({ .name = field.name, .value = value, .explicitly_set = true });
+			field_list.push({ .name = field.name, .value = value.value, .explicitly_set = true });
 		}
 
 		foreach (option : header_spec.options) {
@@ -399,14 +372,13 @@ fn BuildResult build(Registry* registry, Packet packet) {
 			}
 
 			if (option.value_kind == AttrValueKind.PACKET) {
-				String err = "";
-				Packet? packet_value = packet_attribute_value(&attr, &err);
-				if (catch packet_value) {
-					result.errors.push(string::tformat("attribute '%s' in header '%s' %s", attr.name, header.protocol, err));
+				Result{Packet, String} packet_value = packet_attribute_value(&attr);
+				if (!packet_value.is_ok) {
+					result.errors.push(string::tformat("attribute '%s' in header '%s' %s", attr.name, header.protocol, packet_value.error));
 					continue;
 				}
 
-				BuildResult nested = build(registry, packet_value);
+				BuildResult nested = build(registry, packet_value.value);
 				foreach (w : nested.warnings) result.warnings.push(w);
 				if (!nested.ok) {
 					foreach (nerr : nested.errors) {
@@ -423,24 +395,22 @@ fn BuildResult build(Registry* registry, Packet packet) {
 				});
 			}
 			else {
-				String err = "";
-				ScalarValue? attr_value = scalar_attribute_value(&attr, &err);
-				if (catch attr_value) {
-					result.errors.push(string::tformat("attribute '%s' in header '%s' %s", attr.name, header.protocol, err));
+				Result{ScalarValue, String} attr_value = scalar_attribute_value(&attr);
+				if (!attr_value.is_ok) {
+					result.errors.push(string::tformat("attribute '%s' in header '%s' %s", attr.name, header.protocol, attr_value.error));
 					continue;
 				}
 
-				String verr = "";
 				usz opt_bit_width = cvalue::bit_width_for_type_name(option.type_name);
-				ConstructorValue? value = construct_value(option.type_name, opt_bit_width, attr_value, &verr);
-				if (catch value) {
-					result.errors.push(string::tformat("invalid '%s' in header '%s': %s", attr.name, header.protocol, verr));
+				Result{ConstructorValue, String} value = construct_value(option.type_name, opt_bit_width, attr_value.value);
+				if (!value.is_ok) {
+					result.errors.push(string::tformat("invalid '%s' in header '%s': %s", attr.name, header.protocol, value.error));
 					continue;
 				}
 				option_list.push({
 					.name = option.name,
 					.value_kind = AttrValueKind.SCALAR,
-					.scalar_value = value,
+					.scalar_value = value.value,
 					.explicitly_set = true,
 				});
 			}

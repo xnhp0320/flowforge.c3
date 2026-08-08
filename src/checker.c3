@@ -3,6 +3,7 @@ import flowforge::ast;
 import flowforge::registry;
 import flowforge::validate;
 import std::collections::list;
+import std::collections::result;
 import std::io;
 import std::os;
 
@@ -65,9 +66,9 @@ fn CheckResult Checker.check(&self, Packet packet) {
 
 			String? failing = self.registry.failing_type_message(type_name);
 			if (catch failing) {
-				String err_msg = "";
-				if (!validate::validate_scalar_type(type_name, value, &err_msg)) {
-					result.errors.push(string::tformat("invalid '%s' in header '%s': %s", attr.name, header.protocol, err_msg));
+				Result{bool, String} valid = validate::validate_scalar_type(type_name, value);
+				if (!valid.is_ok) {
+					result.errors.push(string::tformat("invalid '%s' in header '%s': %s", attr.name, header.protocol, valid.error));
 					result.ok = false;
 				}
 			}

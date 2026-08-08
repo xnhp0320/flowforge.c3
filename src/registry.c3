@@ -3,6 +3,7 @@ import std::collections::map;
 import std::collections::set;
 import std::collections::list;
 import std::collections::maybe;
+import std::collections::result;
 import flowforge::value;
 import flowforge::cvalue;
 
@@ -203,8 +204,8 @@ fn bool? Registry.register_inference_rule(&self, String parent_header, String ch
 	}
 	if (!target) return INFERENCE_ERR~;
 
-	String err = "";
-	if (!validate_constructor_value(target.type_name, value, &err)) return INFERENCE_ERR~;
+	Result{bool, String} valid = validate_constructor_value(target.type_name, value);
+	if (!valid.is_ok) return INFERENCE_ERR~;
 
 	String key = inference_key(parent_header, child_header);
 	if (!self.inference_rules.has_key(key)) {
@@ -237,84 +238,73 @@ fn InferenceRule[] Registry.find_inference_rules(&self, String parent, String ch
 	return rules.array_view();
 }
 
-<* Validates a constructor value against a type. Returns true if valid,
-   otherwise sets *error. Mirrors C++ validate_constructor_value. *>
-fn bool validate_constructor_value(String type_name, ConstructorValue value, String* error) {
+<* Validates a constructor value against a type. *>
+fn Result{bool, String} validate_constructor_value(String type_name, ConstructorValue value) {
 	usz bit_width = cvalue::bit_width_for_type_name(type_name);
 
 	usz? range_bit_width = cvalue::bit_range_width_for_type_name(type_name);
 	if (try range_bit_width) {
 		if (value.kind != ConstructorValueKind.UINT) {
 			if (value.kind != ConstructorValueKind.UINT_RANGES) {
-				*error = "bit range constructor fields require integer or range list values";
-				return false;
+				return result::err("bit range constructor fields require integer or range list values");
 			}
 			foreach (r : value.uint_ranges_val) {
 				if (r.first > r.last) {
-					*error = string::tformat("range %d-%d has first value greater than last value", r.first, r.last);
-					return false;
+					return result::err(string::tformat("range %d-%d has first value greater than last value", r.first, r.last));
 				}
-				if (!integer_fits(r.first, range_bit_width, error)) return false;
-				if (!integer_fits(r.last, range_bit_width, error)) return false;
+				Result{bool, String} first_fit = integer_fits(r.first, range_bit_width);
+				if (!first_fit.is_ok) return first_fit;
+				Result{bool, String} last_fit = integer_fits(r.last, range_bit_width);
+				if (!last_fit.is_ok) return last_fit;
 			}
-			return true;
+			return result::ok(true);
 		}
-		return integer_fits(value.uint_val, range_bit_width, error);
+		return integer_fits(value.uint_val, range_bit_width);
 	}
 
 	if (type_name.len && type_name[0] == 'b') {
 		if (value.kind != ConstructorValueKind.UINT) {
-			*error = "bit constructor fields require integer values";
-			return false;
+			return result::err("bit constructor fields require integer values");
 		}
-		return integer_fits(value.uint_val, bit_width, error);
+		return integer_fits(value.uint_val, bit_width);
 	}
 	if (type_name == "mac") {
-		if (value.kind == ConstructorValueKind.MAC) return true;
-		*error = "mac constructor fields require mac address values";
-		return false;
+		if (value.kind == ConstructorValueKind.MAC) return result::ok(true);
+		return result::err("mac constructor fields require mac address values");
 	}
 	if (type_name == "ipv4") {
-		if (value.kind == ConstructorValueKind.IPV4) return true;
-		*error = "ipv4 constructor fields require ipv4 address values";
-		return false;
+		if (value.kind == ConstructorValueKind.IPV4) return result::ok(true);
+		return result::err("ipv4 constructor fields require ipv4 address values");
 	}
 	if (type_name == "ipv6") {
-		if (value.kind == ConstructorValueKind.IPV6) return true;
-		*error = "ipv6 constructor fields require ipv6 address values";
-		return false;
+		if (value.kind == ConstructorValueKind.IPV6) return result::ok(true);
+		return result::err("ipv6 constructor fields require ipv6 address values");
 	}
 	if (type_name == "ipv4_range") {
-		if (value.kind == ConstructorValueKind.IPV4_RANGE) return true;
-		*error = "ipv4 range constructor fields require ipv4 range values";
-		return false;
+		if (value.kind == ConstructorValueKind.IPV4_RANGE) return result::ok(true);
+		return result::err("ipv4 range constructor fields require ipv4 range values");
 	}
 	if (type_name == "ipv6_range") {
-		if (value.kind == ConstructorValueKind.IPV6_RANGE) return true;
-		*error = "ipv6 range constructor fields require ipv6 range values";
-		return false;
+		if (value.kind == ConstructorValueKind.IPV6_RANGE) return result::ok(true);
+		return result::err("ipv6 range constructor fields require ipv6 range values");
 	}
 	if (type_name == "ipv4_ranges") {
-		if (value.kind == ConstructorValueKind.IPV4_RANGES) return true;
-		*error = "ipv4 ranges constructor fields require ipv4 range list values";
-		return false;
+		if (value.kind == ConstructorValueKind.IPV4_RANGES) return result::ok(true);
+		return result::err("ipv4 ranges constructor fields require ipv4 range list values");
 	}
 	if (type_name == "ipv6_ranges") {
-		if (value.kind == ConstructorValueKind.IPV6_RANGES) return true;
-		*error = "ipv6 ranges constructor fields require ipv6 range list values";
-		return false;
+		if (value.kind == ConstructorValueKind.IPV6_RANGES) return result::ok(true);
+		return result::err("ipv6 ranges constructor fields require ipv6 range list values");
 	}
 
-	*error = string::tformat("unsupported constructor type '%s'", type_name);
-	return false;
+	return result::err(string::tformat("unsupported constructor type '%s'", type_name));
 }
 
-fn bool integer_fits(ulong integer, usz bit_width, String* error) {
+fn Result{bool, String} integer_fits(ulong integer, usz bit_width) {
 	if (bit_width < 64 && integer > ((1UL << bit_width) - 1)) {
-		*error = string::tformat("value %d does not fit in %d bits", integer, bit_width);
-		return false;
+		return result::err(string::tformat("value %d does not fit in %d bits", integer, bit_width));
 	}
-	return true;
+	return result::ok(true);
 }
 
 fn void Registry.register_defaults(&self) {
