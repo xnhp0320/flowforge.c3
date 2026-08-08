@@ -49,7 +49,7 @@ fn void test_generator_produces_per_flow_payloads() @test {
 	List{String} errors;
 	errors.tinit();
 
-	char[] payload = gen.payload_for_flow(&result.packet, 2, tmem, &errors)!!;
+	char[] payload = result.packet.payload_for_flow(2, tmem, &errors)!!;
 
 	assert(payload.len == 20);
 	assert(payload[12] == 10);
@@ -69,23 +69,23 @@ fn void test_generator_applies_flow_into_prefilled_buffer_repeatedly() @test {
 	List{String} errors;
 	errors.tinit();
 
-	char[] first_expected = gen.payload_for_flow(&result.packet, 0, tmem, &errors)!!;
+	char[] first_expected = result.packet.payload_for_flow(0, tmem, &errors)!!;
 	assert(errors.len() == 0);
-	char[] last_expected = gen.payload_for_flow(&result.packet, 3, tmem, &errors)!!;
+	char[] last_expected = result.packet.payload_for_flow(3, tmem, &errors)!!;
 	assert(errors.len() == 0);
 
 	char[] reusable = alloc::new_array(tmem, char, (sz)result.packet.base_payload.len);
 	mem::copy(reusable.ptr, result.packet.base_payload.ptr, (sz)result.packet.base_payload.len);
 
-	assert(gen.apply_flow(&result.packet, 0, reusable, &errors));
+	assert(result.packet.apply_flow(0, reusable, &errors));
 	assert(errors.len() == 0);
 	assert(bytes_equal(reusable, first_expected));
 
-	assert(gen.apply_flow(&result.packet, 3, reusable, &errors));
+	assert(result.packet.apply_flow(3, reusable, &errors));
 	assert(errors.len() == 0);
 	assert(bytes_equal(reusable, last_expected));
 
-	assert(gen.apply_flow(&result.packet, 0, reusable, &errors));
+	assert(result.packet.apply_flow(0, reusable, &errors));
 	assert(errors.len() == 0);
 	assert(bytes_equal(reusable, first_expected));
 }

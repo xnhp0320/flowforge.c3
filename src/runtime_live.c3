@@ -92,7 +92,6 @@ struct WorkerContext {
 	bool once;
 	bool split;
 	Mempool* mbuf_pool;
-	PacketGenerator* generator;
 	GeneratedPacket* packet;
 	ushort batch_size;
 	ulong tx_attempted;
@@ -348,7 +347,7 @@ fn void free_unsent(Mbuf** packets, ushort begin, ushort end) @private {
 
 fn bool prepare_batch_packet(WorkerContext* context, Mbuf* mbuf, ulong flow_index) @private {
 	char[] payload = mbuf.mtod()[:context.packet.base_payload.len];
-	if (!context.generator.apply_flow_checksums_only_unchecked(context.packet, flow_index, payload, &context.errors)) {
+	if (!context.packet.apply_flow_checksums_only_unchecked(flow_index, payload, &context.errors)) {
 		return false;
 	}
 
@@ -759,7 +758,7 @@ fn bool wait_for_all(uint[] lcores, WorkerContext[] tx_ctxs, RxWorkerContext[] r
 
 // --- traffic orchestration ------------------------------------------------
 
-fn bool run_traffic(ushort port_id, Mempool* mbuf_pool, PacketGenerator* generator, GeneratedPacket* packet, ushort batch_size, ulong tx_threads, ulong rx_threads, RunOptions options, List{String}* errors, Result* result, List{WorkerResult}* workers, List{WorkerResult}* rx_workers) @private {
+fn bool run_traffic(ushort port_id, Mempool* mbuf_pool, GeneratedPacket* packet, ushort batch_size, ulong tx_threads, ulong rx_threads, RunOptions options, List{String}* errors, Result* result, List{WorkerResult}* workers, List{WorkerResult}* rx_workers) @private {
 	uint[RUNTIME_MAX_LCORES] lcore_buf;
 	uint nworkers = dpdk::ff_worker_lcores(&lcore_buf[0], (uint)RUNTIME_MAX_LCORES);
 	ulong total_threads = tx_threads + rx_threads;
@@ -780,7 +779,6 @@ fn bool run_traffic(ushort port_id, Mempool* mbuf_pool, PacketGenerator* generat
 		context.once = options.once;
 		context.split = options.split;
 		context.mbuf_pool = mbuf_pool;
-		context.generator = generator;
 		context.packet = packet;
 		context.batch_size = batch_size;
 
@@ -824,7 +822,6 @@ fn bool run_traffic(ushort port_id, Mempool* mbuf_pool, PacketGenerator* generat
 		context.once = options.once;
 		context.split = options.split;
 		context.mbuf_pool = mbuf_pool;
-		context.generator = generator;
 		context.packet = packet;
 		context.batch_size = batch_size;
 		context.published_stats = &tx_published_stats[worker];
@@ -1028,7 +1025,7 @@ fn Result Runtime.run(&self, Program program, String eal_program_name, RunOption
 	if (pool != null && probe_tap_port(&result.errors) &&
 		configure_and_start_port(RUNTIME_PORT_ID, rx_queue_count, tx_queue_count, pool, &result.errors, &result)) {
 		port_started = true;
-		run_traffic(RUNTIME_PORT_ID, pool, &generator, &generated.packet, batch_size, tx_threads, rx_threads, options, &result.errors, &result, &workers, &rx_workers);
+		run_traffic(RUNTIME_PORT_ID, pool, &generated.packet, batch_size, tx_threads, rx_threads, options, &result.errors, &result, &workers, &rx_workers);
 	}
 
 	if (port_started) {

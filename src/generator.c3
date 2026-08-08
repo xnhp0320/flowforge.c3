@@ -87,10 +87,10 @@ fn PacketGenerationResult PacketGenerator.prepare(&self, Packet packet, MaybeCou
 }
 
 <* Returns a freshly allocated payload (owned by `alloc`) for the given flow. *>
-fn char[]? PacketGenerator.payload_for_flow(&self, GeneratedPacket* packet, ulong flow_index, Allocator alloc, List{String}* errors) {
-	char[] payload = alloc::new_array(alloc, char, (sz)packet.base_payload.len);
-	mem::copy(payload.ptr, packet.base_payload.ptr, (sz)packet.base_payload.len);
-	if (!self.apply_flow(packet, flow_index, payload, errors)) {
+fn char[]? GeneratedPacket.payload_for_flow(&self, ulong flow_index, Allocator alloc, List{String}* errors) {
+	char[] payload = alloc::new_array(alloc, char, (sz)self.base_payload.len);
+	mem::copy(payload.ptr, self.base_payload.ptr, (sz)self.base_payload.len);
+	if (!self.apply_flow(flow_index, payload, errors)) {
 		alloc::free(alloc, payload.ptr);
 		return GENERATE_ERR~;
 	}
@@ -98,64 +98,64 @@ fn char[]? PacketGenerator.payload_for_flow(&self, GeneratedPacket* packet, ulon
 }
 
 <* Patches an already-populated buffer to represent a specific flow. *>
-fn bool PacketGenerator.apply_flow(&self, GeneratedPacket* packet, ulong flow_index, char[] payload, List{String}* errors) {
-	if (flow_index >= packet.flow_plan.planned_packets) {
+fn bool GeneratedPacket.apply_flow(&self, ulong flow_index, char[] payload, List{String}* errors) {
+	if (flow_index >= self.flow_plan.planned_packets) {
 		errors.push("flow index is outside the planned packet count");
 		return false;
 	}
-	if (payload.len < packet.base_payload.len) {
+	if (payload.len < self.base_payload.len) {
 		errors.push("payload buffer is smaller than the packet length");
 		return false;
 	}
 
-	char[] packet_payload = payload[:packet.base_payload.len];
+	char[] packet_payload = payload[:self.base_payload.len];
 	uint ipv4_pseudo_delta = 0;
-	if (!apply_flow_index(packet_payload, packet.modifiers, packet.fixup_plan, flow_index, errors, &ipv4_pseudo_delta)) {
+	if (!apply_flow_index(packet_payload, self.modifiers, self.fixup_plan, flow_index, errors, &ipv4_pseudo_delta)) {
 		return false;
 	}
 
-	FixupResult fixed = serializer::apply_fixup_plan(packet_payload, packet.fixup_plan);
+	FixupResult fixed = serializer::apply_fixup_plan(packet_payload, self.fixup_plan);
 	foreach (e : fixed.errors) errors.push(e);
 	return fixed.ok;
 }
 
-<* Patches a payload that was copied from `GeneratedPacket.base_payload` and
-   refreshes only checksum fields. Length fields are assumed to already be
-   fixed in the seeded base payload. *>
-fn bool PacketGenerator.apply_flow_checksums_only(&self, GeneratedPacket* packet, ulong flow_index, char[] payload, List{String}* errors) {
-	if (flow_index >= packet.flow_plan.planned_packets) {
+<* Patches a payload that was copied from `base_payload` and refreshes only
+   checksum fields. Length fields are assumed to already be fixed in the
+   seeded base payload. *>
+fn bool GeneratedPacket.apply_flow_checksums_only(&self, ulong flow_index, char[] payload, List{String}* errors) {
+	if (flow_index >= self.flow_plan.planned_packets) {
 		errors.push("flow index is outside the planned packet count");
 		return false;
 	}
-	if (payload.len < packet.base_payload.len) {
+	if (payload.len < self.base_payload.len) {
 		errors.push("payload buffer is smaller than the packet length");
 		return false;
 	}
-	if (packet.modifiers.len() == 0) return true;
+	if (self.modifiers.len() == 0) return true;
 
-	char[] packet_payload = payload[:packet.base_payload.len];
+	char[] packet_payload = payload[:self.base_payload.len];
 	uint ipv4_pseudo_delta = 0;
-	if (!apply_flow_index(packet_payload, packet.modifiers, packet.fixup_plan, flow_index, errors, &ipv4_pseudo_delta)) {
+	if (!apply_flow_index(packet_payload, self.modifiers, self.fixup_plan, flow_index, errors, &ipv4_pseudo_delta)) {
 		return false;
 	}
 
-	FixupResult fixed = serializer::apply_checksum_fixup_plan(packet_payload, packet.fixup_plan, ipv4_pseudo_delta);
+	FixupResult fixed = serializer::apply_checksum_fixup_plan(packet_payload, self.fixup_plan, ipv4_pseudo_delta);
 	foreach (e : fixed.errors) errors.push(e);
 	return fixed.ok;
 }
 
 <* Unchecked DPDK live Tx hot-path variant. The runtime validates flow indexes
    and payload sizing once before workers are launched. *>
-fn bool PacketGenerator.apply_flow_checksums_only_unchecked(&self, GeneratedPacket* packet, ulong flow_index, char[] payload, List{String}* errors) {
-	if (packet.modifiers.len() == 0) return true;
+fn bool GeneratedPacket.apply_flow_checksums_only_unchecked(&self, ulong flow_index, char[] payload, List{String}* errors) {
+	if (self.modifiers.len() == 0) return true;
 
-	char[] packet_payload = payload[:packet.base_payload.len];
+	char[] packet_payload = payload[:self.base_payload.len];
 	uint ipv4_pseudo_delta = 0;
-	if (!apply_flow_index(packet_payload, packet.modifiers, packet.fixup_plan, flow_index, errors, &ipv4_pseudo_delta)) {
+	if (!apply_flow_index(packet_payload, self.modifiers, self.fixup_plan, flow_index, errors, &ipv4_pseudo_delta)) {
 		return false;
 	}
 
-	FixupResult fixed = serializer::apply_checksum_fixup_plan(packet_payload, packet.fixup_plan, ipv4_pseudo_delta);
+	FixupResult fixed = serializer::apply_checksum_fixup_plan(packet_payload, self.fixup_plan, ipv4_pseudo_delta);
 	foreach (e : fixed.errors) errors.push(e);
 	return fixed.ok;
 }
