@@ -154,7 +154,7 @@ fn void test_loaded_header_serializes_end_to_end() @test {
 	char[16] buf;
 	SerializeResult result = serializer::serialize_packet(built.packet, &reg, buf[..]);
 	assert(result.ok);
-	assert(result.packet_len == 4);
+	assert(result.payload.len == 4);
 	assert(buf[0] == 1);
 	assert(buf[1] == 2);
 	assert(buf[2] == 0x03);

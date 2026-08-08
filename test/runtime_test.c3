@@ -48,9 +48,9 @@ fn void test_tap_runtime_packet_serializes_and_fixes_up() @test {
 	char[2048] payload;
 	SerializeResult serialized = serializer::serialize_packet(built.packet, &reg, payload[..]);
 	assert(serialized.ok);
-	assert(serialized.packet_len == 42);
+	assert(serialized.payload.len == 42);
 
-	FixupResult fixed = serializer::fixup_packet(built.packet, &reg, payload[..], serialized.packet_len);
+	FixupResult fixed = serializer::fixup_packet(built.packet, &reg, serialized.payload);
 	assert(fixed.ok);
 	assert(fixed.errors.len == 0);
 }

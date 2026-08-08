@@ -45,7 +45,7 @@ fn void test_serializes_ether_ip_udp_scalars() @test {
 	SerializeResult result = serialize_into(built.packet, buf[..]);
 
 	assert(result.ok);
-	assert(result.packet_len == 42);
+	assert(result.payload.len == 42);
 	assert(byte_at(buf[..], 0) == 0xff);
 	assert(byte_at(buf[..], 5) == 0xff);
 	assert(byte_at(buf[..], 6) == 0x00);
@@ -70,7 +70,7 @@ fn void test_serializes_vlan_cross_byte_fields() @test {
 	SerializeResult result = serialize_into(built.packet, buf[..]);
 
 	assert(result.ok);
-	assert(result.packet_len == 4);
+	assert(result.payload.len == 4);
 	assert(byte_at(buf[..], 0) == 0xff);
 	assert(byte_at(buf[..], 1) == 0xff);
 	assert(u16_at(buf[..], 2) == 0x0800);
@@ -95,7 +95,7 @@ fn void test_payload_length_extends_serialized_packet() @test {
 	SerializeResult result = serialize_into(built.packet, buf[..]);
 
 	assert(result.ok);
-	assert(result.packet_len == 46);
+	assert(result.payload.len == 46);
 	assert(byte_at(buf[..], 14) == 0);
 	assert(byte_at(buf[..], 45) == 0);
 	assert(byte_at(buf[..], 46) == 0xff);
@@ -108,7 +108,7 @@ fn void test_payload_total_length_extends_serialized_packet() @test {
 	SerializeResult result = serialize_into(built.packet, buf[..]);
 
 	assert(result.ok);
-	assert(result.packet_len == 100);
+	assert(result.payload.len == 100);
 }
 
 fn void test_serializes_ipv4_options_and_advances_next_header() @test {
@@ -118,7 +118,7 @@ fn void test_serializes_ipv4_options_and_advances_next_header() @test {
 	SerializeResult result = serialize_into(built.packet, buf[..]);
 
 	assert(result.ok);
-	assert(result.packet_len == 44);
+	assert(result.payload.len == 44);
 	assert(byte_at(buf[..], 0) == 0x46);
 	assert(byte_at(buf[..], 20) == 1);
 	assert(byte_at(buf[..], 21) == 0);
@@ -134,7 +134,7 @@ fn void test_serializes_tcp_options_and_pads_header() @test {
 	SerializeResult result = serialize_into(built.packet, buf[..]);
 
 	assert(result.ok);
-	assert(result.packet_len == 44);
+	assert(result.payload.len == 44);
 	assert(byte_at(buf[..], 20 + 12) == 0x60);
 	assert(byte_at(buf[..], 40) == 2);
 	assert(byte_at(buf[..], 41) == 4);
@@ -151,7 +151,7 @@ fn void test_tcp_option_header_length_feeds_hardware_offload() @test {
 	Registry reg = registry::create_default_registry();
 	FixupOptions options;
 	options.tcp_checksum = FixupMode.HARDWARE_OFFLOAD;
-	FixupResult fixup = serializer::fixup_packet(built.packet, &reg, buf[..], serialize.packet_len, options);
+	FixupResult fixup = serializer::fixup_packet(built.packet, &reg, serialize.payload, options);
 
 	assert(fixup.ok);
 	assert(fixup.offload.tcp_checksum);
@@ -274,7 +274,7 @@ fn void test_modified_payload_can_be_fixed_up_again() @test {
 	assert(modifier != null);
 
 	assert(modifier.apply(buf[..], 2).is_ok);
-	FixupResult fixup = serializer::fixup_packet(built.packet, &reg, buf[..], serialize.packet_len);
+	FixupResult fixup = serializer::fixup_packet(built.packet, &reg, serialize.payload);
 
 	assert(fixup.ok);
 	assert(byte_at(buf[..], 26) == 192);
@@ -293,13 +293,13 @@ fn void test_planned_software_fixup_can_be_reused_after_range_mutation() @test {
 
 	SerializeResult serialize = serializer::serialize_packet(built.packet, &reg, buf[..]);
 	assert(serialize.ok);
-	FixupPlanResult plan = serializer::plan_packet_fixups(built.packet, &reg, buf[..], serialize.packet_len);
+	FixupPlanResult plan = serializer::plan_packet_fixups(built.packet, &reg, serialize.payload);
 	assert(plan.ok);
 	PayloadFieldModifier* modifier = find_modifier(serialize, "IP", "src");
 	assert(modifier != null);
 
 	assert(modifier.apply(buf[..], 2).is_ok);
-	FixupResult fixup = serializer::apply_fixup_plan(buf[..], plan.plan);
+	FixupResult fixup = serializer::apply_fixup_plan(serialize.payload, plan.plan);
 
 	assert(fixup.ok);
 	assert(byte_at(buf[..], 29) == 3);
@@ -320,13 +320,13 @@ fn void test_planned_hardware_fixup_reuses_offload_metadata_and_refreshes_pseudo
 	FixupOptions options;
 	options.ipv4_checksum = FixupMode.HARDWARE_OFFLOAD;
 	options.udp_checksum = FixupMode.HARDWARE_OFFLOAD;
-	FixupPlanResult plan = serializer::plan_packet_fixups(built.packet, &reg, buf[..], serialize.packet_len, options);
+	FixupPlanResult plan = serializer::plan_packet_fixups(built.packet, &reg, serialize.payload, options);
 	assert(plan.ok);
 	PayloadFieldModifier* modifier = find_modifier(serialize, "IP", "src");
 	assert(modifier != null);
 
 	assert(modifier.apply(buf[..], 2).is_ok);
-	FixupResult fixup = serializer::apply_fixup_plan(buf[..], plan.plan);
+	FixupResult fixup = serializer::apply_fixup_plan(serialize.payload, plan.plan);
 
 	assert(fixup.ok);
 	assert(fixup.offload.layer3 == OffloadLayer3.IPV4);
@@ -352,12 +352,12 @@ fn void test_checksum_only_fixup_refreshes_seed_without_rewriting_lengths() @tes
 	FixupOptions options;
 	options.ipv4_checksum = FixupMode.HARDWARE_OFFLOAD;
 	options.udp_checksum = FixupMode.HARDWARE_OFFLOAD;
-	FixupPlanResult plan = serializer::plan_packet_fixups(built.packet, &reg, buf[..], serialize.packet_len, options);
+	FixupPlanResult plan = serializer::plan_packet_fixups(built.packet, &reg, serialize.payload, options);
 	assert(plan.ok);
 	PayloadFieldModifier* modifier = find_modifier(serialize, "IP", "src");
 	assert(modifier != null);
 
-	FixupResult initial = serializer::apply_fixup_plan(buf[..], plan.plan);
+	FixupResult initial = serializer::apply_fixup_plan(serialize.payload, plan.plan);
 	assert(initial.ok);
 	set_u16(buf[..], 16, 0xaaaa);
 	set_u16(buf[..], 38, 0xbbbb);
@@ -365,7 +365,7 @@ fn void test_checksum_only_fixup_refreshes_seed_without_rewriting_lengths() @tes
 	assert(modifier.apply(buf[..], 2).is_ok);
 	uint? delta = modifier.ipv4_pseudo_delta(plan.plan, 2);
 	if (catch delta) assert(false);
-	FixupResult fixup = serializer::apply_checksum_fixup_plan(buf[..], plan.plan, delta);
+	FixupResult fixup = serializer::apply_checksum_fixup_plan(serialize.payload, plan.plan, delta);
 
 	assert(fixup.ok);
 	assert(u16_at(buf[..], 16) == 0xaaaa);
@@ -384,7 +384,7 @@ fn void test_software_fixup_updates_lengths_and_checksums() @test {
 
 	SerializeResult serialize = serializer::serialize_packet(built.packet, &reg, buf[..]);
 	assert(serialize.ok);
-	FixupResult fixup = serializer::fixup_packet(built.packet, &reg, buf[..], serialize.packet_len);
+	FixupResult fixup = serializer::fixup_packet(built.packet, &reg, serialize.payload);
 
 	assert(fixup.ok);
 	assert(u16_at(buf[..], 16) == 28);
@@ -406,7 +406,7 @@ fn void test_hardware_fixup_records_offload_request() @test {
 	FixupOptions options;
 	options.ipv4_checksum = FixupMode.HARDWARE_OFFLOAD;
 	options.udp_checksum = FixupMode.HARDWARE_OFFLOAD;
-	FixupResult fixup = serializer::fixup_packet(built.packet, &reg, buf[..], serialize.packet_len, options);
+	FixupResult fixup = serializer::fixup_packet(built.packet, &reg, serialize.payload, options);
 
 	assert(fixup.ok);
 	assert(fixup.offload.layer3 == OffloadLayer3.IPV4);
@@ -432,7 +432,7 @@ fn void test_disabled_checksum_mode_preserves_explicit_checksum_fields() @test {
 	FixupOptions options;
 	options.ipv4_checksum = FixupMode.DISABLED;
 	options.udp_checksum = FixupMode.DISABLED;
-	FixupResult fixup = serializer::fixup_packet(built.packet, &reg, buf[..], serialize.packet_len, options);
+	FixupResult fixup = serializer::fixup_packet(built.packet, &reg, serialize.payload, options);
 
 	assert(fixup.ok);
 	assert(u16_at(buf[..], 16) == 28);
@@ -452,9 +452,9 @@ fn void test_fixup_writes_outer_udp_length_alongside_inner_tcp() @test {
 	Registry reg = registry::create_default_registry();
 	SerializeResult serialize = serializer::serialize_packet(built.packet, &reg, buf[..]);
 	assert(serialize.ok);
-	assert(serialize.packet_len == 104);
+	assert(serialize.payload.len == 104);
 
-	FixupResult fixup = serializer::fixup_packet(built.packet, &reg, buf[..], serialize.packet_len);
+	FixupResult fixup = serializer::fixup_packet(built.packet, &reg, serialize.payload);
 	assert(fixup.ok);
 
 	// Outer IPv4 total length @16 and outer UDP length @38 are both written.
@@ -477,7 +477,7 @@ fn void test_vxlan_hardware_fixup_uses_tunnel_offload_and_zero_outer_udp_checksu
 	options.ipv4_checksum = FixupMode.HARDWARE_OFFLOAD;
 	options.tcp_checksum = FixupMode.HARDWARE_OFFLOAD;
 	options.udp_checksum = FixupMode.HARDWARE_OFFLOAD;
-	FixupResult fixup = serializer::fixup_packet(built.packet, &reg, buf[..], serialize.packet_len, options);
+	FixupResult fixup = serializer::fixup_packet(built.packet, &reg, serialize.payload, options);
 
 	assert(fixup.ok);
 	assert(fixup.offload.tunnel_vxlan);

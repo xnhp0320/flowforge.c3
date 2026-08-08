@@ -35,7 +35,7 @@ fn void test_generator_caps_range_expansion() @test {
 	assert(result.has_packet);
 	assert(result.packet.flow_plan.total_flows == 3);
 	assert(result.packet.flow_plan.planned_packets == 2);
-	assert(result.packet.packet_len == 20);
+	assert(result.packet.base_payload.len == 20);
 }
 
 fn void test_generator_produces_per_flow_payloads() @test {
@@ -77,8 +77,8 @@ fn void test_generator_applies_flow_into_prefilled_buffer_repeatedly() @test {
 	if (catch last_expected) unreachable();
 	assert(errors.len() == 0);
 
-	char[] reusable = alloc::new_array(tmem, char, (sz)result.packet.packet_len);
-	mem::copy(reusable.ptr, result.packet.base_payload.ptr, (sz)result.packet.packet_len);
+	char[] reusable = alloc::new_array(tmem, char, (sz)result.packet.base_payload.len);
+	mem::copy(reusable.ptr, result.packet.base_payload.ptr, (sz)result.packet.base_payload.len);
 
 	assert(gen.apply_flow(&result.packet, 0, reusable, &errors));
 	assert(errors.len() == 0);
