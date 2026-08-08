@@ -9,7 +9,7 @@ fn usz? bit_range_width_for_type_name(String type_name) {
 	if (!(type_name.len && type_name[0] == 'b') || !type_name.ends_with("_ranges")) {
 		return PARSE_ERR~;
 	}
-	String digits = type_name[1..type_name.len - 8];
+	String digits = type_name[1..^8];
 	ulong? width = digits.to_ulong();
 	if (catch width) return PARSE_ERR~;
 	if (width < 1 || width > 64) return PARSE_ERR~;
@@ -126,7 +126,7 @@ fn Result{UIntRange[], String} parse_uint_ranges(String raw, usz bit_width) {
 	if (!(s.len && s[0] == '[') || !s.ends_with("]")) {
 		return result::err(string::tformat("malformed range list '%s'", raw));
 	}
-	String content = s.len >= 2 ? s[1..s.len - 2] : "";
+	String content = s.len >= 2 ? s[1..^2] : "";
 	if (!content.trim().len) return result::err("empty range list");
 	List{UIntRange} ranges;
 	ranges.tinit();
@@ -250,7 +250,7 @@ fn Result{IPv4Range[], String} parse_ipv4_ranges(String raw) {
 	if (!(s.len && s[0] == '[') || !s.ends_with("]")) {
 		return result::err(string::tformat("malformed range list '%s'", raw));
 	}
-	String content = s.len >= 2 ? s[1..s.len - 2] : "";
+	String content = s.len >= 2 ? s[1..^2] : "";
 	if (!content.trim().len) return result::err("empty range list");
 	List{IPv4Range} ranges;
 	ranges.tinit();
@@ -292,7 +292,7 @@ fn Result{IPv6Range[], String} parse_ipv6_ranges(String raw) {
 	if (!(s.len && s[0] == '[') || !s.ends_with("]")) {
 		return result::err(string::tformat("malformed range list '%s'", raw));
 	}
-	String content = s.len >= 2 ? s[1..s.len - 2] : "";
+	String content = s.len >= 2 ? s[1..^2] : "";
 	if (!content.trim().len) return result::err("empty range list");
 	List{IPv6Range} ranges;
 	ranges.tinit();
