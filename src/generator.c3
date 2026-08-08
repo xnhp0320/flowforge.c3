@@ -155,7 +155,7 @@ fn bool PacketGenerator.apply_flow_checksums_only_unchecked(&self, GeneratedPack
 		return false;
 	}
 
-	FixupResult fixed = serializer::apply_checksum_fixup_plan_unchecked(packet_payload, packet.fixup_plan, ipv4_pseudo_delta);
+	FixupResult fixed = serializer::apply_checksum_fixup_plan(packet_payload, packet.fixup_plan, ipv4_pseudo_delta);
 	foreach (e : fixed.errors) errors.push(e);
 	return fixed.ok;
 }
