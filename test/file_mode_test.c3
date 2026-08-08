@@ -49,8 +49,7 @@ fn void test_generator_produces_per_flow_payloads() @test {
 	List{String} errors;
 	errors.tinit();
 
-	char[]? payload = gen.payload_for_flow(&result.packet, 2, tmem, &errors);
-	if (catch payload) unreachable();
+	char[] payload = gen.payload_for_flow(&result.packet, 2, tmem, &errors)!!;
 
 	assert(payload.len == 20);
 	assert(payload[12] == 10);
@@ -70,11 +69,9 @@ fn void test_generator_applies_flow_into_prefilled_buffer_repeatedly() @test {
 	List{String} errors;
 	errors.tinit();
 
-	char[]? first_expected = gen.payload_for_flow(&result.packet, 0, tmem, &errors);
-	if (catch first_expected) unreachable();
+	char[] first_expected = gen.payload_for_flow(&result.packet, 0, tmem, &errors)!!;
 	assert(errors.len() == 0);
-	char[]? last_expected = gen.payload_for_flow(&result.packet, 3, tmem, &errors);
-	if (catch last_expected) unreachable();
+	char[] last_expected = gen.payload_for_flow(&result.packet, 3, tmem, &errors)!!;
 	assert(errors.len() == 0);
 
 	char[] reusable = alloc::new_array(tmem, char, (sz)result.packet.base_payload.len);
