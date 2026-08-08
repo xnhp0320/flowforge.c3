@@ -61,7 +61,7 @@ struct PayloadFieldModifier {
 struct SerializeResult {
 	bool ok;
 	String[] errors;
-	usz packet_len;
+	char[] payload;
 	PayloadFieldModifier[] modifiers;
 }
 
@@ -131,7 +131,6 @@ struct IcmpFixup {
 // C++ plan — so that, for instance, the outer UDP length is still written even
 // when an inner TCP header is present.
 struct PacketFixupPlan {
-	usz packet_len;
 	bool vxlan_tunnel;
 	Maybe{Ipv4Fixup} outer_ipv4;
 	Maybe{Ipv6Fixup} outer_ipv6;
@@ -674,14 +673,14 @@ fn SerializeResult serialize_packet(PacketConstructor packet, Registry* registry
 		return result;
 	}
 
-	result.packet_len = bit_width / 8;
-	if (output.len < result.packet_len) {
-		errors.push(string::tformat("output buffer has %d bytes but packet requires %d bytes", output.len, result.packet_len));
+	usz written = bit_width / 8;
+	if (output.len < written) {
+		errors.push(string::tformat("output buffer has %d bytes but packet requires %d bytes", output.len, written));
 		result.errors = errors.to_tarray();
 		return result;
 	}
 
-	mem::clear(output.ptr, (sz)result.packet_len);
+	mem::clear(output.ptr, (sz)written);
 
 	foreach (header : packet) {
 		HeaderSpec*? header_spec = registry.find_header(header.protocol);
@@ -711,6 +710,7 @@ fn SerializeResult serialize_packet(PacketConstructor packet, Registry* registry
 		}
 	}
 
+	result.payload = output[:written];
 	result.modifiers = modifiers.to_tarray();
 	result.errors = errors.to_tarray();
 	result.ok = errors.len() == 0;
@@ -817,19 +817,10 @@ fn HeaderRef? find_header_ref_after(PacketConstructor packet, Registry* registry
 }
 
 <* @param [&in] registry : `read-only protocol definitions` *>
-fn FixupPlanResult plan_packet_fixups(PacketConstructor packet, Registry* registry, char[] buffer, usz packet_len, FixupOptions options = {}) {
+fn FixupPlanResult plan_packet_fixups(PacketConstructor packet, Registry* registry, char[] payload, FixupOptions options = {}) {
 	FixupPlanResult result;
-	result.plan.packet_len = packet_len;
 	List{String} errors;
 	errors.tinit();
-
-	if (buffer.len < packet_len) {
-		errors.push(string::tformat("buffer has %d bytes but packet length is %d bytes", buffer.len, packet_len));
-		result.errors = errors.to_tarray();
-		return result;
-	}
-
-	char[] payload = buffer[:packet_len];
 
 	HeaderRef? vxlan = find_header_ref(packet, registry, "VXLAN");
 	if (try vxlan) {
@@ -839,16 +830,16 @@ fn FixupPlanResult plan_packet_fixups(PacketConstructor packet, Registry* regist
 
 		HeaderRef? outer_ip = find_header_ref_before(packet, registry, "IP", vxlan_offset);
 		if (try outer_ip) {
-			if (packet_len < outer_ip.header.offset + 20) {
+			if (payload.len < outer_ip.header.offset + 20) {
 				errors.push("outer IPv4 header extends beyond packet length");
 			}
 			else {
 				usz ihl_bytes = (usz)(read_u8(payload, outer_ip.header.offset) & 0x0f) * 4;
-				if (ihl_bytes < 20 || outer_ip.header.offset + ihl_bytes > packet_len) {
+				if (ihl_bytes < 20 || outer_ip.header.offset + ihl_bytes > payload.len) {
 					errors.push(string::tformat("invalid outer IPv4 IHL %d bytes", ihl_bytes));
 				}
 				else {
-					usz ip_len = packet_len - outer_ip.header.offset;
+					usz ip_len = payload.len - outer_ip.header.offset;
 					if (ip_len > 0xffff) {
 						errors.push(string::tformat("outer IPv4 packet length %d exceeds 16 bits", ip_len));
 					}
@@ -866,11 +857,11 @@ fn FixupPlanResult plan_packet_fixups(PacketConstructor packet, Registry* regist
 		HeaderRef? outer_ipv6 = find_header_ref_before(packet, registry, "IPv6", vxlan_offset);
 		if (try outer_ipv6) {
 			usz ipv6_header_len = 40;
-			if (packet_len < outer_ipv6.header.offset + ipv6_header_len) {
+			if (payload.len < outer_ipv6.header.offset + ipv6_header_len) {
 				errors.push("outer IPv6 header extends beyond packet length");
 			}
 			else {
-				usz payload_len = packet_len - outer_ipv6.header.offset - ipv6_header_len;
+				usz payload_len = payload.len - outer_ipv6.header.offset - ipv6_header_len;
 				if (payload_len > 0xffff) {
 					errors.push(string::tformat("outer IPv6 payload length %d exceeds 16 bits", payload_len));
 				}
@@ -882,11 +873,11 @@ fn FixupPlanResult plan_packet_fixups(PacketConstructor packet, Registry* regist
 
 		HeaderRef? outer_udp = find_header_ref_before(packet, registry, "UDP", vxlan_offset);
 		if (try outer_udp) {
-			if (packet_len < outer_udp.header.offset + 8) {
+			if (payload.len < outer_udp.header.offset + 8) {
 				errors.push("outer UDP header extends beyond packet length");
 			}
 			else {
-				usz udp_len = packet_len - outer_udp.header.offset;
+				usz udp_len = payload.len - outer_udp.header.offset;
 				if (udp_len > 0xffff) {
 					errors.push(string::tformat("outer UDP length %d exceeds 16 bits", udp_len));
 				}
@@ -896,16 +887,16 @@ fn FixupPlanResult plan_packet_fixups(PacketConstructor packet, Registry* regist
 
 		HeaderRef? inner_ip = find_header_ref_after(packet, registry, "IP", vxlan_offset);
 		if (try inner_ip) {
-			if (packet_len < inner_ip.header.offset + 20) {
+			if (payload.len < inner_ip.header.offset + 20) {
 				errors.push("inner IPv4 header extends beyond packet length");
 			}
 			else {
 				usz ihl_bytes = (usz)(read_u8(payload, inner_ip.header.offset) & 0x0f) * 4;
-				if (ihl_bytes < 20 || inner_ip.header.offset + ihl_bytes > packet_len) {
+				if (ihl_bytes < 20 || inner_ip.header.offset + ihl_bytes > payload.len) {
 					errors.push(string::tformat("invalid inner IPv4 IHL %d bytes", ihl_bytes));
 				}
 				else {
-					usz ip_len = packet_len - inner_ip.header.offset;
+					usz ip_len = payload.len - inner_ip.header.offset;
 					if (ip_len > 0xffff) {
 						errors.push(string::tformat("inner IPv4 packet length %d exceeds 16 bits", ip_len));
 					}
@@ -926,11 +917,11 @@ fn FixupPlanResult plan_packet_fixups(PacketConstructor packet, Registry* regist
 		HeaderRef? inner_ipv6 = find_header_ref_after(packet, registry, "IPv6", vxlan_offset);
 		if (try inner_ipv6) {
 			usz ipv6_header_len = 40;
-			if (packet_len < inner_ipv6.header.offset + ipv6_header_len) {
+			if (payload.len < inner_ipv6.header.offset + ipv6_header_len) {
 				errors.push("inner IPv6 header extends beyond packet length");
 			}
 			else {
-				usz payload_len = packet_len - inner_ipv6.header.offset - ipv6_header_len;
+				usz payload_len = payload.len - inner_ipv6.header.offset - ipv6_header_len;
 				if (payload_len > 0xffff) {
 					errors.push(string::tformat("inner IPv6 payload length %d exceeds 16 bits", payload_len));
 				}
@@ -946,11 +937,11 @@ fn FixupPlanResult plan_packet_fixups(PacketConstructor packet, Registry* regist
 
 		HeaderRef? inner_udp = find_header_ref_after(packet, registry, "UDP", vxlan_offset);
 		if (try inner_udp) {
-			if (packet_len < inner_udp.header.offset + 8) {
+			if (payload.len < inner_udp.header.offset + 8) {
 				errors.push("inner UDP header extends beyond packet length");
 			}
 			else {
-				usz udp_len = packet_len - inner_udp.header.offset;
+				usz udp_len = payload.len - inner_udp.header.offset;
 				if (udp_len > 0xffff) {
 					errors.push(string::tformat("inner UDP length %d exceeds 16 bits", udp_len));
 				}
@@ -964,11 +955,11 @@ fn FixupPlanResult plan_packet_fixups(PacketConstructor packet, Registry* regist
 
 		HeaderRef? inner_tcp = find_header_ref_after(packet, registry, "TCP", vxlan_offset);
 		if (try inner_tcp) {
-			if (packet_len < inner_tcp.header.offset + 20) {
+			if (payload.len < inner_tcp.header.offset + 20) {
 				errors.push("inner TCP header extends beyond packet length");
 			}
 			else {
-				usz tcp_len = packet_len - inner_tcp.header.offset;
+				usz tcp_len = payload.len - inner_tcp.header.offset;
 				usz tcp_header_len = (usz)(read_u8(payload, inner_tcp.header.offset + 12) >> 4) * 4;
 				if (tcp_header_len < 20 || tcp_header_len > tcp_len) {
 					errors.push(string::tformat("invalid inner TCP header length %d bytes", tcp_header_len));
@@ -984,7 +975,7 @@ fn FixupPlanResult plan_packet_fixups(PacketConstructor packet, Registry* regist
 		HeaderRef? inner_icmp = find_header_ref_after(packet, registry, "ICMP", vxlan_offset);
 		if (try inner_icmp) {
 			if (options.icmp_checksum != FixupMode.DISABLED) {
-				if (packet_len < inner_icmp.header.offset + 4) {
+				if (payload.len < inner_icmp.header.offset + 4) {
 					errors.push("inner ICMP header extends beyond packet length");
 				}
 				else if (options.icmp_checksum == FixupMode.HARDWARE_OFFLOAD) {
@@ -1004,16 +995,16 @@ fn FixupPlanResult plan_packet_fixups(PacketConstructor packet, Registry* regist
 
 	HeaderRef? ip = find_header_ref(packet, registry, "IP");
 	if (try ip) {
-		if (packet_len < ip.header.offset + 20) {
+		if (payload.len < ip.header.offset + 20) {
 			errors.push("IPv4 header extends beyond packet length");
 		}
 		else {
 			usz ihl_bytes = (usz)(read_u8(payload, ip.header.offset) & 0x0f) * 4;
-			if (ihl_bytes < 20 || ip.header.offset + ihl_bytes > packet_len) {
+			if (ihl_bytes < 20 || ip.header.offset + ihl_bytes > payload.len) {
 				errors.push(string::tformat("invalid IPv4 IHL %d bytes", ihl_bytes));
 			}
 			else {
-				usz ip_len = packet_len - ip.header.offset;
+				usz ip_len = payload.len - ip.header.offset;
 				if (ip_len > 0xffff) {
 					errors.push(string::tformat("IPv4 packet length %d exceeds 16 bits", ip_len));
 				}
@@ -1032,11 +1023,11 @@ fn FixupPlanResult plan_packet_fixups(PacketConstructor packet, Registry* regist
 	HeaderRef? ipv6 = find_header_ref(packet, registry, "IPv6");
 	if (try ipv6) {
 		usz ipv6_header_len = 40;
-		if (packet_len < ipv6.header.offset + ipv6_header_len) {
+		if (payload.len < ipv6.header.offset + ipv6_header_len) {
 			errors.push("IPv6 header extends beyond packet length");
 		}
 		else {
-			usz payload_len = packet_len - ipv6.header.offset - ipv6_header_len;
+			usz payload_len = payload.len - ipv6.header.offset - ipv6_header_len;
 			if (payload_len > 0xffff) {
 				errors.push(string::tformat("IPv6 payload length %d exceeds 16 bits", payload_len));
 			}
@@ -1046,11 +1037,11 @@ fn FixupPlanResult plan_packet_fixups(PacketConstructor packet, Registry* regist
 
 	HeaderRef? udp = find_header_ref(packet, registry, "UDP");
 	if (try udp) {
-		if (packet_len < udp.header.offset + 8) {
+		if (payload.len < udp.header.offset + 8) {
 			errors.push("UDP header extends beyond packet length");
 		}
 		else {
-			usz udp_len = packet_len - udp.header.offset;
+			usz udp_len = payload.len - udp.header.offset;
 			if (udp_len > 0xffff) {
 				errors.push(string::tformat("UDP length %d exceeds 16 bits", udp_len));
 			}
@@ -1085,11 +1076,11 @@ fn FixupPlanResult plan_packet_fixups(PacketConstructor packet, Registry* regist
 
 	HeaderRef? tcp = find_header_ref(packet, registry, "TCP");
 	if (try tcp) {
-		if (packet_len < tcp.header.offset + 20) {
+		if (payload.len < tcp.header.offset + 20) {
 			errors.push("TCP header extends beyond packet length");
 		}
 		else {
-			usz tcp_len = packet_len - tcp.header.offset;
+			usz tcp_len = payload.len - tcp.header.offset;
 			usz tcp_header_len = (usz)(read_u8(payload, tcp.header.offset + 12) >> 4) * 4;
 			if (tcp_header_len < 20 || tcp_header_len > tcp_len) {
 				errors.push(string::tformat("invalid TCP header length %d bytes", tcp_header_len));
@@ -1126,7 +1117,7 @@ fn FixupPlanResult plan_packet_fixups(PacketConstructor packet, Registry* regist
 	HeaderRef? icmp = find_header_ref(packet, registry, "ICMP");
 	if (try icmp) {
 		if (options.icmp_checksum != FixupMode.DISABLED) {
-			if (packet_len < icmp.header.offset + 4) {
+			if (payload.len < icmp.header.offset + 4) {
 				errors.push("ICMP header extends beyond packet length");
 			}
 			else if (options.icmp_checksum == FixupMode.HARDWARE_OFFLOAD) {
@@ -1182,32 +1173,24 @@ fn void populate_ipv4_pseudo_bases(char[] payload, PacketFixupPlan* plan) @priva
 	if (!plan.ipv4.has_value) return;
 	usz ip_offset = plan.ipv4.value.offset;
 	if (plan.udp.has_value && plan.udp.value.checksum != FixupMode.DISABLED) {
-		usz udp_len = plan.packet_len - plan.udp.value.offset;
+		usz udp_len = payload.len - plan.udp.value.offset;
 		plan.udp_ipv4_pseudo_base.set(ipv4_pseudo_sum(payload, ip_offset, UDP_PROTOCOL, (ushort)udp_len));
 	}
 	if (plan.tcp.has_value && plan.tcp.value.checksum != FixupMode.DISABLED) {
-		usz tcp_len = plan.packet_len - plan.tcp.value.offset;
+		usz tcp_len = payload.len - plan.tcp.value.offset;
 		plan.tcp_ipv4_pseudo_base.set(ipv4_pseudo_sum(payload, ip_offset, TCP_PROTOCOL, (ushort)tcp_len));
 	}
 }
 
-fn FixupResult apply_fixup_plan(char[] buffer, PacketFixupPlan plan) {
+fn FixupResult apply_fixup_plan(char[] payload, PacketFixupPlan plan) {
 	FixupResult result;
 	result.offload = plan.offload;
 	List{String} errors;
 	bool has_errors = false;
 
-	if (buffer.len < plan.packet_len) {
-		push_fixup_error(&errors, &has_errors, string::tformat("buffer has %d bytes but packet length is %d bytes", buffer.len, plan.packet_len));
-		result.errors = errors.to_tarray();
-		return result;
-	}
-
-	char[] payload = buffer[:plan.packet_len];
-
 	if (plan.outer_ipv4.has_value) {
 		Ipv4Fixup ipv4 = plan.outer_ipv4.value;
-		write_u16(payload, ipv4.offset + 2, (ushort)(plan.packet_len - ipv4.offset));
+		write_u16(payload, ipv4.offset + 2, (ushort)(payload.len - ipv4.offset));
 		if (ipv4.checksum != FixupMode.DISABLED) {
 			write_u16(payload, ipv4.offset + 10, 0);
 			if (ipv4.checksum == FixupMode.SOFTWARE) {
@@ -1217,19 +1200,19 @@ fn FixupResult apply_fixup_plan(char[] buffer, PacketFixupPlan plan) {
 	}
 	if (plan.outer_ipv6.has_value) {
 		Ipv6Fixup ipv6 = plan.outer_ipv6.value;
-		usz payload_len = plan.packet_len - ipv6.offset - ipv6.header_len;
+		usz payload_len = payload.len - ipv6.offset - ipv6.header_len;
 		write_u16(payload, ipv6.offset + 4, (ushort)payload_len);
 	}
 	if (plan.outer_udp.has_value) {
 		UdpFixup udp = plan.outer_udp.value;
-		usz udp_len = plan.packet_len - udp.offset;
+		usz udp_len = payload.len - udp.offset;
 		write_u16(payload, udp.offset + 4, (ushort)udp_len);
 		write_u16(payload, udp.offset + 6, 0);
 	}
 
 	if (plan.ipv4.has_value) {
 		Ipv4Fixup ipv4 = plan.ipv4.value;
-		write_u16(payload, ipv4.offset + 2, (ushort)(plan.packet_len - ipv4.offset));
+		write_u16(payload, ipv4.offset + 2, (ushort)(payload.len - ipv4.offset));
 		if (ipv4.checksum != FixupMode.DISABLED) {
 			write_u16(payload, ipv4.offset + 10, 0);
 			if (ipv4.checksum == FixupMode.SOFTWARE) {
@@ -1239,13 +1222,13 @@ fn FixupResult apply_fixup_plan(char[] buffer, PacketFixupPlan plan) {
 	}
 	if (plan.ipv6.has_value) {
 		Ipv6Fixup ipv6 = plan.ipv6.value;
-		usz payload_len = plan.packet_len - ipv6.offset - ipv6.header_len;
+		usz payload_len = payload.len - ipv6.offset - ipv6.header_len;
 		write_u16(payload, ipv6.offset + 4, (ushort)payload_len);
 	}
 
 	if (plan.udp.has_value) {
 		UdpFixup udp = plan.udp.value;
-		usz udp_len = plan.packet_len - udp.offset;
+		usz udp_len = payload.len - udp.offset;
 		write_u16(payload, udp.offset + 4, (ushort)udp_len);
 		if (udp.checksum != FixupMode.DISABLED) {
 			write_u16(payload, udp.offset + 6, 0);
@@ -1267,7 +1250,7 @@ fn FixupResult apply_fixup_plan(char[] buffer, PacketFixupPlan plan) {
 	if (plan.tcp.has_value && plan.tcp.value.checksum != FixupMode.DISABLED) {
 		TcpFixup tcp = plan.tcp.value;
 		write_u16(payload, tcp.offset + 16, 0);
-		usz tcp_len = plan.packet_len - tcp.offset;
+		usz tcp_len = payload.len - tcp.offset;
 
 		uint? pseudo = l4_pseudo_sum(payload, plan, TCP_PROTOCOL, (uint)tcp_len);
 		if (catch pseudo) {
@@ -1284,7 +1267,7 @@ fn FixupResult apply_fixup_plan(char[] buffer, PacketFixupPlan plan) {
 		IcmpFixup icmp = plan.icmp.value;
 		write_u16(payload, icmp.offset + 2, 0);
 		write_u16(payload, icmp.offset + 2,
-			internet_checksum(checksum_sum(payload[icmp.offset : plan.packet_len - icmp.offset])));
+			internet_checksum(checksum_sum(payload[icmp.offset : payload.len - icmp.offset])));
 	}
 
 	if (has_errors) {
@@ -1299,19 +1282,11 @@ fn FixupResult apply_fixup_plan(char[] buffer, PacketFixupPlan plan) {
 <* Refreshes checksum fields only. Use this when the payload was copied from a
    fully fixed-up base packet and only flow-varying fields were patched. This
    deliberately does not rewrite IPv4/IPv6/UDP length fields. *>
-fn FixupResult apply_checksum_fixup_plan(char[] buffer, PacketFixupPlan plan, uint ipv4_pseudo_delta = 0) {
+fn FixupResult apply_checksum_fixup_plan(char[] payload, PacketFixupPlan plan, uint ipv4_pseudo_delta = 0) {
 	FixupResult result;
 	result.offload = plan.offload;
 	List{String} errors;
 	bool has_errors = false;
-
-	if (buffer.len < plan.packet_len) {
-		push_fixup_error(&errors, &has_errors, string::tformat("buffer has %d bytes but packet length is %d bytes", buffer.len, plan.packet_len));
-		result.errors = errors.to_tarray();
-		return result;
-	}
-
-	char[] payload = buffer[:plan.packet_len];
 
 	if (plan.outer_ipv4.has_value) {
 		Ipv4Fixup ipv4 = plan.outer_ipv4.value;
@@ -1338,7 +1313,7 @@ fn FixupResult apply_checksum_fixup_plan(char[] buffer, PacketFixupPlan plan, ui
 
 	if (plan.udp.has_value) {
 		UdpFixup udp = plan.udp.value;
-		usz udp_len = plan.packet_len - udp.offset;
+		usz udp_len = payload.len - udp.offset;
 		if (udp.checksum != FixupMode.DISABLED) {
 			write_u16(payload, udp.offset + 6, 0);
 
@@ -1359,7 +1334,7 @@ fn FixupResult apply_checksum_fixup_plan(char[] buffer, PacketFixupPlan plan, ui
 	if (plan.tcp.has_value && plan.tcp.value.checksum != FixupMode.DISABLED) {
 		TcpFixup tcp = plan.tcp.value;
 		write_u16(payload, tcp.offset + 16, 0);
-		usz tcp_len = plan.packet_len - tcp.offset;
+		usz tcp_len = payload.len - tcp.offset;
 
 		uint? pseudo = l4_pseudo_sum_with_delta(payload, plan, TCP_PROTOCOL, (uint)tcp_len, ipv4_pseudo_delta);
 		if (catch pseudo) {
@@ -1376,7 +1351,7 @@ fn FixupResult apply_checksum_fixup_plan(char[] buffer, PacketFixupPlan plan, ui
 		IcmpFixup icmp = plan.icmp.value;
 		write_u16(payload, icmp.offset + 2, 0);
 		write_u16(payload, icmp.offset + 2,
-			internet_checksum(checksum_sum(payload[icmp.offset : plan.packet_len - icmp.offset])));
+			internet_checksum(checksum_sum(payload[icmp.offset : payload.len - icmp.offset])));
 	}
 
 	if (has_errors) {
@@ -1389,13 +1364,12 @@ fn FixupResult apply_checksum_fixup_plan(char[] buffer, PacketFixupPlan plan, ui
 }
 
 <* Unchecked variant for the DPDK live Tx hot path. The caller must guarantee
-   `buffer.len >= plan.packet_len` during setup. *>
-fn FixupResult apply_checksum_fixup_plan_unchecked(char[] buffer, PacketFixupPlan plan, uint ipv4_pseudo_delta = 0) {
+   `payload` is the exact packet during setup. *>
+fn FixupResult apply_checksum_fixup_plan_unchecked(char[] payload, PacketFixupPlan plan, uint ipv4_pseudo_delta = 0) {
 	FixupResult result;
 	result.offload = plan.offload;
 	List{String} errors;
 	bool has_errors = false;
-	char[] payload = buffer[:plan.packet_len];
 
 	if (plan.outer_ipv4.has_value) {
 		Ipv4Fixup ipv4 = plan.outer_ipv4.value;
@@ -1422,7 +1396,7 @@ fn FixupResult apply_checksum_fixup_plan_unchecked(char[] buffer, PacketFixupPla
 
 	if (plan.udp.has_value) {
 		UdpFixup udp = plan.udp.value;
-		usz udp_len = plan.packet_len - udp.offset;
+		usz udp_len = payload.len - udp.offset;
 		if (udp.checksum != FixupMode.DISABLED) {
 			write_u16(payload, udp.offset + 6, 0);
 
@@ -1443,7 +1417,7 @@ fn FixupResult apply_checksum_fixup_plan_unchecked(char[] buffer, PacketFixupPla
 	if (plan.tcp.has_value && plan.tcp.value.checksum != FixupMode.DISABLED) {
 		TcpFixup tcp = plan.tcp.value;
 		write_u16(payload, tcp.offset + 16, 0);
-		usz tcp_len = plan.packet_len - tcp.offset;
+		usz tcp_len = payload.len - tcp.offset;
 
 		uint? pseudo = l4_pseudo_sum_with_delta(payload, plan, TCP_PROTOCOL, (uint)tcp_len, ipv4_pseudo_delta);
 		if (catch pseudo) {
@@ -1460,7 +1434,7 @@ fn FixupResult apply_checksum_fixup_plan_unchecked(char[] buffer, PacketFixupPla
 		IcmpFixup icmp = plan.icmp.value;
 		write_u16(payload, icmp.offset + 2, 0);
 		write_u16(payload, icmp.offset + 2,
-			internet_checksum(checksum_sum(payload[icmp.offset : plan.packet_len - icmp.offset])));
+			internet_checksum(checksum_sum(payload[icmp.offset : payload.len - icmp.offset])));
 	}
 
 	if (has_errors) {
@@ -1473,10 +1447,10 @@ fn FixupResult apply_checksum_fixup_plan_unchecked(char[] buffer, PacketFixupPla
 }
 
 <* @param [&in] registry : `read-only protocol definitions` *>
-fn FixupResult fixup_packet(PacketConstructor packet, Registry* registry, char[] buffer, usz packet_len, FixupOptions options = {}) {
-	FixupPlanResult plan = plan_packet_fixups(packet, registry, buffer, packet_len, options);
+fn FixupResult fixup_packet(PacketConstructor packet, Registry* registry, char[] payload, FixupOptions options = {}) {
+	FixupPlanResult plan = plan_packet_fixups(packet, registry, payload, options);
 	if (!plan.ok) {
 		return { .ok = false, .errors = plan.errors, .offload = plan.plan.offload };
 	}
-	return apply_fixup_plan(buffer, plan.plan);
+	return apply_fixup_plan(payload, plan.plan);
 }

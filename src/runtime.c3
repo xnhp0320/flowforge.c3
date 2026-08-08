@@ -324,7 +324,7 @@ fn Result Runtime.check(&self, Program program, RunOptions options = default_run
 	append_strings(&result.errors, generated.errors);
 	if (!generated.ok || !generated.has_packet) return result;
 
-	result.packet_len = generated.packet.packet_len;
+	result.packet_len = generated.packet.base_payload.len;
 	result.total_flows = generated.packet.flow_plan.total_flows;
 	result.planned_packets = generated.packet.flow_plan.planned_packets;
 	result.pmd_threads = config.pmd_threads.has_value ? config.pmd_threads.value : 1;

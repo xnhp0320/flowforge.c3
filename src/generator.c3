@@ -25,7 +25,6 @@ struct GeneratedPacket {
 	char[] base_payload;
 	List{PayloadFieldModifier} modifiers;
 	PacketFixupPlan fixup_plan;
-	usz packet_len;
 	FlowIndexPlan flow_plan;
 	Allocator allocator;
 }
@@ -89,12 +88,8 @@ fn PacketGenerationResult PacketGenerator.prepare(&self, Packet packet, MaybeCou
 
 <* Returns a freshly allocated payload (owned by `alloc`) for the given flow. *>
 fn char[]? PacketGenerator.payload_for_flow(&self, GeneratedPacket* packet, ulong flow_index, Allocator alloc, List{String}* errors) {
-	if (packet.base_payload.len != packet.packet_len) {
-		errors.push("base payload length does not match packet length");
-		return GENERATE_ERR~;
-	}
-	char[] payload = alloc::new_array(alloc, char, (sz)packet.packet_len);
-	mem::copy(payload.ptr, packet.base_payload.ptr, (sz)packet.packet_len);
+	char[] payload = alloc::new_array(alloc, char, (sz)packet.base_payload.len);
+	mem::copy(payload.ptr, packet.base_payload.ptr, (sz)packet.base_payload.len);
 	if (!self.apply_flow(packet, flow_index, payload, errors)) {
 		alloc::free(alloc, payload.ptr);
 		return GENERATE_ERR~;
@@ -108,12 +103,12 @@ fn bool PacketGenerator.apply_flow(&self, GeneratedPacket* packet, ulong flow_in
 		errors.push("flow index is outside the planned packet count");
 		return false;
 	}
-	if (payload.len < packet.packet_len) {
+	if (payload.len < packet.base_payload.len) {
 		errors.push("payload buffer is smaller than the packet length");
 		return false;
 	}
 
-	char[] packet_payload = payload[:packet.packet_len];
+	char[] packet_payload = payload[:packet.base_payload.len];
 	uint ipv4_pseudo_delta = 0;
 	if (!apply_flow_index(packet_payload, packet.modifiers, packet.fixup_plan, flow_index, errors, &ipv4_pseudo_delta)) {
 		return false;
@@ -132,13 +127,13 @@ fn bool PacketGenerator.apply_flow_checksums_only(&self, GeneratedPacket* packet
 		errors.push("flow index is outside the planned packet count");
 		return false;
 	}
-	if (payload.len < packet.packet_len) {
+	if (payload.len < packet.base_payload.len) {
 		errors.push("payload buffer is smaller than the packet length");
 		return false;
 	}
 	if (packet.modifiers.len() == 0) return true;
 
-	char[] packet_payload = payload[:packet.packet_len];
+	char[] packet_payload = payload[:packet.base_payload.len];
 	uint ipv4_pseudo_delta = 0;
 	if (!apply_flow_index(packet_payload, packet.modifiers, packet.fixup_plan, flow_index, errors, &ipv4_pseudo_delta)) {
 		return false;
@@ -154,7 +149,7 @@ fn bool PacketGenerator.apply_flow_checksums_only(&self, GeneratedPacket* packet
 fn bool PacketGenerator.apply_flow_checksums_only_unchecked(&self, GeneratedPacket* packet, ulong flow_index, char[] payload, List{String}* errors) {
 	if (packet.modifiers.len() == 0) return true;
 
-	char[] packet_payload = payload[:packet.packet_len];
+	char[] packet_payload = payload[:packet.base_payload.len];
 	uint ipv4_pseudo_delta = 0;
 	if (!apply_flow_index(packet_payload, packet.modifiers, packet.fixup_plan, flow_index, errors, &ipv4_pseudo_delta)) {
 		return false;
@@ -172,22 +167,21 @@ fn bool PacketGenerator.serialize_generated(&self, PacketConstructor packet, Fix
 	foreach (e : serialized.errors) errors.push(e);
 	if (!serialized.ok) return false;
 
-	FixupPlanResult plan = serializer::plan_packet_fixups(packet, self.registry, scratch[..], serialized.packet_len, fixup_options);
+	FixupPlanResult plan = serializer::plan_packet_fixups(packet, self.registry, serialized.payload, fixup_options);
 	foreach (e : plan.errors) errors.push(e);
 	if (!plan.ok) return false;
 
-	FixupResult fixed = serializer::apply_fixup_plan(scratch[..], plan.plan);
+	FixupResult fixed = serializer::apply_fixup_plan(serialized.payload, plan.plan);
 	foreach (e : fixed.errors) errors.push(e);
 	if (!fixed.ok) return false;
 
-	char[] base_payload = alloc::new_array(alloc, char, (sz)serialized.packet_len);
-	mem::copy(base_payload.ptr, &scratch[0], (sz)serialized.packet_len);
+	char[] base_payload = alloc::new_array(alloc, char, (sz)serialized.payload.len);
+	mem::copy(base_payload.ptr, serialized.payload.ptr, (sz)serialized.payload.len);
 
 	*out = {
 		.base_payload = base_payload,
 		.modifiers = copy_modifiers(serialized.modifiers, alloc),
 		.fixup_plan = plan.plan,
-		.packet_len = serialized.packet_len,
 		.flow_plan = {},
 		.allocator = alloc,
 	};

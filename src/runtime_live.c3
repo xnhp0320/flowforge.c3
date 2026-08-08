@@ -348,7 +348,7 @@ fn void free_unsent(Mbuf** packets, ushort begin, ushort end) @private {
 }
 
 fn bool prepare_batch_packet(WorkerContext* context, Mbuf* mbuf, ulong flow_index) @private {
-	char[] payload = mbuf.mtod()[:context.packet.packet_len];
+	char[] payload = mbuf.mtod()[:context.packet.base_payload.len];
 	if (!context.generator.apply_flow_checksums_only_unchecked(context.packet, flow_index, payload, &context.errors)) {
 		return false;
 	}
@@ -867,7 +867,7 @@ fn bool run_traffic(ushort port_id, Mempool* mbuf_pool, PacketGenerator* generat
 
 	if (!ok) runtime_stop_requested = true;
 
-	ok = wait_for_all(&used_lcores[0], &tx_ctxs[0], tx_launched, &rx_ctxs[0], rx_launched, port_id, packet.packet_len, batch_size, options, errors) && ok;
+	ok = wait_for_all(&used_lcores[0], &tx_ctxs[0], tx_launched, &rx_ctxs[0], rx_launched, port_id, packet.base_payload.len, batch_size, options, errors) && ok;
 
 	for (usz i = 0; i < tx_launched; i++) {
 		result.tx_attempted += tx_ctxs[i].tx_attempted;
@@ -987,7 +987,7 @@ fn Result Runtime.run(&self, Program program, String eal_program_name, RunOption
 	}
 	defer generated.packet.free();
 
-	result.packet_len = generated.packet.packet_len;
+	result.packet_len = generated.packet.base_payload.len;
 	result.total_flows = generated.packet.flow_plan.total_flows;
 	result.planned_packets = generated.packet.flow_plan.planned_packets;
 	result.pmd_threads = config.pmd_threads.has_value ? config.pmd_threads.value : 1;
@@ -999,11 +999,8 @@ fn Result Runtime.run(&self, Program program, String eal_program_name, RunOption
 	result.once = options.once;
 
 	result.planned_transmissions = checked_total_transmission_count(result.planned_packets, result.pmd_threads, options, &result);
-	if (generated.packet.base_payload.len != generated.packet.packet_len) {
-		result.errors.push("base payload length does not match packet length");
-	}
-	if (generated.packet.packet_len > (usz)dpdk::MBUF_DEFAULT_DATAROOM) {
-		result.errors.push(string::tformat("packet length %d does not fit in a DPDK mbuf", generated.packet.packet_len));
+	if (generated.packet.base_payload.len > (usz)dpdk::MBUF_DEFAULT_DATAROOM) {
+		result.errors.push(string::tformat("packet length %d does not fit in a DPDK mbuf", generated.packet.base_payload.len));
 	}
 	if (result.errors.len()) {
 		return result;

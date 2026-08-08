@@ -92,8 +92,8 @@ fn void print_modifiers(List{PayloadFieldModifier} modifiers) {
 	}
 }
 
-fn void print_fixup_plan(PacketFixupPlan plan) {
-	io::printfn("fixup_plan: packet_len=%d vxlan_tunnel=%s", plan.packet_len, bool_name(plan.vxlan_tunnel));
+fn void print_fixup_plan(PacketFixupPlan plan, usz packet_len) {
+	io::printfn("fixup_plan: packet_len=%d vxlan_tunnel=%s", packet_len, bool_name(plan.vxlan_tunnel));
 	io::printfn("  offload: layer3=%s ipv4_checksum=%s outer_ipv4_checksum=%s tcp_checksum=%s udp_checksum=%s tunnel_vxlan=%s l2_len=%d l3_len=%d l4_len=%d outer_l2_len=%d outer_l3_len=%d",
 		offload_layer3_name(plan.offload.layer3),
 		bool_name(plan.offload.ipv4_checksum),
@@ -147,9 +147,9 @@ fn bool print_verbose_packet(String label, Packet packet, Registry* reg, generat
 	foreach (e : generated.errors) io::eprintfn("ERROR: %s", e);
 	if (!generated.ok) return false;
 	io::printfn("verbose packet '%s': packet_len=%d total_flows=%d planned_packets=%d",
-		label, generated.packet.packet_len, generated.packet.flow_plan.total_flows, generated.packet.flow_plan.planned_packets);
+		label, generated.packet.base_payload.len, generated.packet.flow_plan.total_flows, generated.packet.flow_plan.planned_packets);
 	print_modifiers(generated.packet.modifiers);
-	print_fixup_plan(generated.packet.fixup_plan);
+	print_fixup_plan(generated.packet.fixup_plan, generated.packet.base_payload.len);
 	return true;
 }
 
@@ -262,9 +262,9 @@ fn int run_file_mode(Packet packet, generator::MaybeCount count, String output_p
 	defer result.packet.free();
 	if (verbose) {
 		io::printfn("verbose packet 'packet': packet_len=%d total_flows=%d planned_packets=%d",
-			result.packet.packet_len, result.packet.flow_plan.total_flows, result.packet.flow_plan.planned_packets);
+			result.packet.base_payload.len, result.packet.flow_plan.total_flows, result.packet.flow_plan.planned_packets);
 		print_modifiers(result.packet.modifiers);
-		print_fixup_plan(result.packet.fixup_plan);
+		print_fixup_plan(result.packet.fixup_plan, result.packet.base_payload.len);
 	}
 
 	File? out_file = file::open(output_path, "wb");
@@ -282,7 +282,7 @@ fn int run_file_mode(Packet packet, generator::MaybeCount count, String output_p
 	}
 
 	ulong planned = result.packet.flow_plan.planned_packets;
-	usz packet_len = result.packet.packet_len;
+	usz packet_len = result.packet.base_payload.len;
 	char[] payload = alloc::new_array(mem, char, (sz)packet_len);
 	defer alloc::free(mem, payload.ptr);
 
