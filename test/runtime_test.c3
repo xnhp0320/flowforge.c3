@@ -39,8 +39,7 @@ fn void test_tap_runtime_packet_serializes_and_fixes_up() @test {
 	Program program = must_parse_program(TAP_RUNTIME_PROGRAM);
 	Registry reg = registry::create_default_registry();
 	assert(program.variables.len() >= 3);
-	ScalarValue? value = ast::evaluate(program.variables[2].expression);
-	if (catch value) unreachable();
+	ScalarValue value = ast::evaluate(program.variables[2].expression)!!;
 	assert(value.kind == ScalarKind.PACKET);
 	BuildResult built = constructor::build(&reg, value.packet_val);
 	assert(built.ok);
