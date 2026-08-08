@@ -1,15 +1,15 @@
 module flowforge_parser_test @test;
-import flowforge::token;
-import flowforge::lexer;
 import flowforge::parser;
 import flowforge::ast;
 import std::collections::list;
+import std::collections::result;
 
 fn void test_parser_single_header_no_attrs() @test {
 	Parser p;
 	p.init("Ether");
-	Packet? pkt = p.parse_packet();
-	if (catch pkt) unreachable();
+	Result{Packet, String} parsed = p.parse_packet();
+	if (!parsed.is_ok) unreachable();
+	Packet pkt = parsed.value;
 	assert(pkt.len() == 1);
 	assert(pkt[0].protocol == "Ether");
 	assert(pkt[0].attributes.len() == 0);
@@ -18,8 +18,9 @@ fn void test_parser_single_header_no_attrs() @test {
 fn void test_parser_single_header_with_attrs() @test {
 	Parser p;
 	p.init("Ether(dst=\"ff:ff:ff:ff:ff:ff\",src=\"00:11:22:33:44:55\")");
-	Packet? pkt = p.parse_packet();
-	if (catch pkt) unreachable();
+	Result{Packet, String} parsed = p.parse_packet();
+	if (!parsed.is_ok) unreachable();
+	Packet pkt = parsed.value;
 	assert(pkt.len() == 1);
 	assert(pkt[0].protocol == "Ether");
 	assert(pkt[0].attributes.len() == 2);
@@ -44,8 +45,9 @@ fn void test_parser_single_header_with_attrs() @test {
 fn void test_parser_scapy_style() @test {
 	Parser p;
 	p.init("Ether(dst=\"ff:ff:ff:ff:ff:ff\")/IP(src=\"192.168.1.1\",dst=\"10.0.0.1\")/TCP(dport=80)");
-	Packet? pkt = p.parse_packet();
-	if (catch pkt) unreachable();
+	Result{Packet, String} parsed = p.parse_packet();
+	if (!parsed.is_ok) unreachable();
+	Packet pkt = parsed.value;
 	assert(pkt.len() == 3);
 
 	assert(pkt[0].protocol == "Ether");
@@ -78,8 +80,9 @@ fn void test_parser_scapy_style() @test {
 fn void test_parser_hex_number() @test {
 	Parser p;
 	p.init("Raw(len=0xFF)");
-	Packet? pkt = p.parse_packet();
-	if (catch pkt) unreachable();
+	Result{Packet, String} parsed = p.parse_packet();
+	if (!parsed.is_ok) unreachable();
+	Packet pkt = parsed.value;
 	assert(pkt.len() == 1);
 	ScalarValue? val = ast::attr_scalar(&pkt[0].attributes[0]);
 	if (catch val) { assert(false); }
@@ -90,8 +93,9 @@ fn void test_parser_hex_number() @test {
 fn void test_parser_binary_number() @test {
 	Parser p;
 	p.init("Raw(len=0b101010)");
-	Packet? pkt = p.parse_packet();
-	if (catch pkt) unreachable();
+	Result{Packet, String} parsed = p.parse_packet();
+	if (!parsed.is_ok) unreachable();
+	Packet pkt = parsed.value;
 	assert(pkt.len() == 1);
 	ScalarValue? val = ast::attr_scalar(&pkt[0].attributes[0]);
 	if (catch val) { assert(false); }
@@ -102,8 +106,9 @@ fn void test_parser_binary_number() @test {
 fn void test_parser_string_escape() @test {
 	Parser p;
 	p.init("Raw(data=\"line1\\nline2\\ttabbed\")");
-	Packet? pkt = p.parse_packet();
-	if (catch pkt) unreachable();
+	Result{Packet, String} parsed = p.parse_packet();
+	if (!parsed.is_ok) unreachable();
+	Packet pkt = parsed.value;
 	assert(pkt.len() == 1);
 	ScalarValue? val = ast::attr_scalar(&pkt[0].attributes[0]);
 	if (catch val) { assert(false); }
@@ -114,8 +119,9 @@ fn void test_parser_string_escape() @test {
 fn void test_parser_attribute_name_only() @test {
 	Parser p;
 	p.init("Flag(URG,ACK,PSH)");
-	Packet? pkt = p.parse_packet();
-	if (catch pkt) unreachable();
+	Result{Packet, String} parsed = p.parse_packet();
+	if (!parsed.is_ok) unreachable();
+	Packet pkt = parsed.value;
 	assert(pkt.len() == 1);
 	assert(pkt[0].attributes.len() == 3);
 	assert(pkt[0].attributes[0].name == "URG");
@@ -129,8 +135,9 @@ fn void test_parser_attribute_name_only() @test {
 fn void test_parser_empty_parens() @test {
 	Parser p;
 	p.init("Ether()");
-	Packet? pkt = p.parse_packet();
-	if (catch pkt) unreachable();
+	Result{Packet, String} parsed = p.parse_packet();
+	if (!parsed.is_ok) unreachable();
+	Packet pkt = parsed.value;
 	assert(pkt.len() == 1);
 	assert(pkt[0].protocol == "Ether");
 	assert(pkt[0].attributes.len() == 0);
@@ -139,8 +146,9 @@ fn void test_parser_empty_parens() @test {
 fn void test_parser_packet_variable_wrapper() @test {
 	Parser p;
 	p.init("PACKET: Ether(dst=\"ff:ff:ff:ff:ff:ff\")/IP(src=\"192.168.1.1\")");
-	Program? program = p.parse();
-	if (catch program) unreachable();
+	Result{Program, String} parsed = p.parse();
+	if (!parsed.is_ok) unreachable();
+	Program program = parsed.value;
 	assert(program.variables.len() == 1);
 	assert(program.variables[0].name == "PACKET");
 
@@ -156,8 +164,9 @@ fn void test_parser_packet_variable_wrapper() @test {
 fn void test_parser_string_expression() @test {
 	Parser p;
 	p.init("\"hello\"");
-	Expression? expression = p.parse_expression();
-	if (catch expression) unreachable();
+	Result{Expression, String} parsed = p.parse_expression();
+	if (!parsed.is_ok) unreachable();
+	Expression expression = parsed.value;
 
 	ScalarValue? value = ast::evaluate(expression);
 	if (catch value) unreachable();
@@ -168,8 +177,9 @@ fn void test_parser_string_expression() @test {
 fn void test_parser_integer_expression() @test {
 	Parser p;
 	p.init("42");
-	Expression? expression = p.parse_expression();
-	if (catch expression) unreachable();
+	Result{Expression, String} parsed = p.parse_expression();
+	if (!parsed.is_ok) unreachable();
+	Expression expression = parsed.value;
 
 	ScalarValue? value = ast::evaluate(expression);
 	if (catch value) unreachable();
@@ -180,8 +190,9 @@ fn void test_parser_integer_expression() @test {
 fn void test_parser_packet_expression() @test {
 	Parser p;
 	p.init("Ether()/TCP(dport=80)");
-	Expression? expression = p.parse_expression();
-	if (catch expression) unreachable();
+	Result{Expression, String} parsed = p.parse_expression();
+	if (!parsed.is_ok) unreachable();
+	Expression expression = parsed.value;
 
 	ScalarValue? value = ast::evaluate(expression);
 	if (catch value) unreachable();
@@ -195,8 +206,9 @@ fn void test_parser_packet_expression() @test {
 fn void test_parser_attribute_can_take_packet_expression() @test {
 	Parser p;
 	p.init("HeaderA(X=HeaderB()/HeaderC(),D=1)");
-	Packet? pkt = p.parse_packet();
-	if (catch pkt) unreachable();
+	Result{Packet, String} parsed = p.parse_packet();
+	if (!parsed.is_ok) unreachable();
+	Packet pkt = parsed.value;
 	assert(pkt.len() == 1);
 	assert(pkt[0].attributes.len() == 2);
 
@@ -217,8 +229,9 @@ fn void test_parser_attribute_can_take_packet_expression() @test {
 fn void test_parser_variable_definition() @test {
 	Parser p;
 	p.init("XXX: 1");
-	Variable? variable = p.parse_variable();
-	if (catch variable) unreachable();
+	Result{Variable, String} parsed = p.parse_variable();
+	if (!parsed.is_ok) unreachable();
+	Variable variable = parsed.value;
 	assert(variable.name == "XXX");
 
 	ScalarValue? value = ast::evaluate(variable.expression);
@@ -230,8 +243,9 @@ fn void test_parser_variable_definition() @test {
 fn void test_parser_program_with_variables() @test {
 	Parser p;
 	p.init("XXX: 1\nPACKET: IP(src=\"192.168.0.1\")/TCP(dport=80)");
-	Program? program = p.parse();
-	if (catch program) unreachable();
+	Result{Program, String} parsed = p.parse();
+	if (!parsed.is_ok) unreachable();
+	Program program = parsed.value;
 	assert(program.variables.len() == 2);
 	assert(program.variables[0].name == "XXX");
 	assert(program.variables[1].name == "PACKET");
@@ -250,10 +264,9 @@ fn void test_parser_program_with_variables() @test {
 fn void test_parser_invalid_input() @test {
 	Parser p;
 	p.init("Ether(dst=\"unclosed)");
-	if (catch p.parse_packet()) {
-		assert(p.last_error_msg().len > 0);
-	}
-	else { unreachable(); }
+	Result{Packet, String} parsed = p.parse_packet();
+	assert(!parsed.is_ok);
+	assert(parsed.error.len > 0);
 }
 
 fn void test_parser_operator_slash() @test {
