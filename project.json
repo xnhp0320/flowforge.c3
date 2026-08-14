@@ -11,7 +11,7 @@
   "output": "build",
   "c-sources": [ "csrc/dpdk_shim.c" ],
   "c-include-dirs": [ "/opt/dpdk/include", "csrc" ],
-  "cflags": "-I/opt/dpdk/include -Icsrc -include rte_config.h -march=corei7 -mrtm",
+  "cflags": "-I/opt/dpdk/include -Icsrc -include rte_config.h -march=native",
   "linker": "cc",
   "linker-search-paths": [ "/opt/dpdk/lib/x86_64-linux-gnu" ],
   "link-args": [
