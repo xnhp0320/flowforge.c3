@@ -322,6 +322,14 @@ fn bool configure_and_start_port(ushort port_id, ushort rx_queue_count, ushort t
 		return false;
 	}
 
+	rc = dpdk::rte_eth_promiscuous_enable(port_id);
+	if (rc < 0) {
+		errors.push(string::tformat("rte_eth_promiscuous_enable failed for port %d: %s", port_id, dpdk::strerror(-rc)));
+		(void)dpdk::rte_eth_dev_stop(port_id);
+		(void)dpdk::rte_eth_dev_close(port_id);
+		return false;
+	}
+
 	result.port_id = port_id;
 	return true;
 }

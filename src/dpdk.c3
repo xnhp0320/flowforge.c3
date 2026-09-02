@@ -132,6 +132,7 @@ extern fn ushort rte_eth_dev_count_avail();
 extern fn int rte_eth_rx_queue_setup(ushort port_id, ushort rx_queue_id, ushort nb_rx_desc, uint socket_id, void* rx_conf, Mempool* mb_pool);
 extern fn int rte_eth_tx_queue_setup(ushort port_id, ushort tx_queue_id, ushort nb_tx_desc, uint socket_id, void* tx_conf);
 extern fn int rte_eth_dev_start(ushort port_id);
+extern fn int rte_eth_promiscuous_enable(ushort port_id);
 extern fn int rte_eth_dev_stop(ushort port_id);
 extern fn int rte_eth_dev_close(ushort port_id);
 extern fn int rte_eth_dev_socket_id(ushort port_id);
