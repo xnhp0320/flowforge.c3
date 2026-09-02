@@ -1,0 +1,25 @@
+csrc/dpdk_shim.c
+  s_2ed911c8c6d8a9::t_19302e7267779c 12,79-109,112,116-129
+csrc/dpdk_shim.h
+  s_2ed911c8c6d8a9::t_32927dd7038b83 29-37,68-73
+src/dpdk.c3
+  s_2ed911c8c6d8a9::t_47355c6121b18a 90-95,169-170
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "7f06947dda9fd4a72d3d6f749adfb942650a0e8a",
+  "prompts": {},
+  "sessions": {
+    "s_2ed911c8c6d8a9": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a060fe-6ad8-75f0-92ef-dc8f1f803503",
+        "model": "unknown"
+      },
+      "human_author": "xnhp0320 <xnhp0320@gmail.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
