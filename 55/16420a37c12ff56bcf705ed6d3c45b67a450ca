@@ -1,0 +1,23 @@
+src/dpdk.c3
+  s_2ed911c8c6d8a9::t_6f25688652db5b 135
+src/runtime_live.c3
+  s_2ed911c8c6d8a9::t_974049589610d7 325-332
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "5516420a37c12ff56bcf705ed6d3c45b67a450ca",
+  "prompts": {},
+  "sessions": {
+    "s_2ed911c8c6d8a9": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a060fe-6ad8-75f0-92ef-dc8f1f803503",
+        "model": "unknown"
+      },
+      "human_author": "xnhp0320 <xnhp0320@gmail.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
