@@ -18,6 +18,7 @@ import flowforge::pcap;
 import flowforge::stats_format;
 import std::atomic::types;
 import std::collections::list;
+import std::collections::maybe;
 import std::io;
 import std::io::file;
 
