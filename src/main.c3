@@ -22,7 +22,7 @@ fn int usage(String prog) {
 	io::eprintfn("       %s [--headers <file>] [--parse-only] -e '<packet expression>'", prog);
 	io::eprintfn("       %s [--headers <file>] -w <out.pcap> [-c <count>] <program.packet>", prog);
 	io::eprintfn("       %s [--headers <file>] -w <out.pcap> [-c <count>] -e '<packet expression>'", prog);
-	io::eprintfn("       %s [--headers <file>] [-v|--verbose] [--clone <n>] [--split] [--once] [--stats-interval <sec>] <program.packet>", prog);
+	io::eprintfn("       %s [--headers <file>] [-v|--verbose] [--clone <n>] [--split] [--once] [--stats-interval <sec>] [--dump-mempool-seed <out.bin>] <program.packet>", prog);
 	io::eprintfn("       %s [--headers <file>] [-v|--verbose] --capture [<out.pcap>] <program.packet>", prog);
 	return 1;
 }
@@ -502,6 +502,11 @@ fn int main(String[] args) {
 				return 1;
 			}
 			live_options.stats_interval_seconds.set((ulong)value);
+			live_flag_present = true;
+		}
+		else if (args[i] == "--dump-mempool-seed") {
+			if (i + 1 >= args.len) return usage(args[0]);
+			live_options.mempool_seed_dump_file.set(args[++i]);
 			live_flag_present = true;
 		}
 		else if (args[i] == "--capture") {

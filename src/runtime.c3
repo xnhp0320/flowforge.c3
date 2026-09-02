@@ -36,6 +36,7 @@ struct RunOptions {
 	MaybeULong stats_interval_seconds;
 	bool capture;
 	Maybe{String} capture_file;
+	Maybe{String} mempool_seed_dump_file;
 }
 
 struct Result {

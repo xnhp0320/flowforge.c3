@@ -87,6 +87,12 @@ const int FF_OFFLOAD_L3_NONE = 0;
 const int FF_OFFLOAD_L3_IPV4 = 1;
 const int FF_OFFLOAD_L3_IPV6 = 2;
 
+// Stable feature bits translated to RTE_ETH_TX_OFFLOAD_* by the C shim.
+const uint FF_TX_OFFLOAD_IPV4_CKSUM = 1u << 0;
+const uint FF_TX_OFFLOAD_UDP_CKSUM = 1u << 1;
+const uint FF_TX_OFFLOAD_TCP_CKSUM = 1u << 2;
+const uint FF_TX_OFFLOAD_OUTER_IPV4_CKSUM = 1u << 3;
+
 // DPDK Tx offload flags. These are stable mbuf flag bit assignments from
 // rte_mbuf_core.h; keeping them here avoids shim calls on the per-packet path.
 const ulong TX_IPV4 = 1ul << 55;
@@ -160,7 +166,8 @@ extern fn void ff_pktmbuf_free_bulk(Mbuf** mbufs, uint count);
 extern fn ushort ff_eth_tx_burst(ushort port_id, ushort queue_id, Mbuf** tx_pkts, ushort nb_pkts);
 extern fn ushort ff_eth_tx_prepare(ushort port_id, ushort queue_id, Mbuf** tx_pkts, ushort nb_pkts);
 extern fn ushort ff_eth_rx_burst(ushort port_id, ushort queue_id, Mbuf** rx_pkts, ushort nb_pkts);
-extern fn int ff_eth_dev_configure(ushort port_id, ushort nb_rx_q, ushort nb_tx_q);
+extern fn int ff_eth_dev_configure(ushort port_id, ushort nb_rx_q, ushort nb_tx_q, uint tx_offload_features);
+extern fn int ff_eth_tx_queue_setup(ushort port_id, ushort queue_id, ushort nb_desc, uint socket_id, uint tx_offload_features);
 extern fn int ff_eth_stats_get(ushort port_id, EthStats* out);
 
 // --- shim: lcore enumeration / tap / test --------------------------------

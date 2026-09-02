@@ -9,6 +9,7 @@
 #include <rte_mbuf_core.h>
 #include <rte_mempool.h>
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -75,10 +76,55 @@ uint16_t ff_eth_rx_burst(uint16_t port_id, uint16_t queue_id, struct rte_mbuf **
 	return rte_eth_rx_burst(port_id, queue_id, rx_pkts, nb_pkts);
 }
 
-int ff_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q) {
+static uint64_t ff_dpdk_tx_offloads(uint32_t features) {
+	uint64_t offloads = 0;
+	if ((features & FF_TX_OFFLOAD_IPV4_CKSUM) != 0) {
+		offloads |= RTE_ETH_TX_OFFLOAD_IPV4_CKSUM;
+	}
+	if ((features & FF_TX_OFFLOAD_UDP_CKSUM) != 0) {
+		offloads |= RTE_ETH_TX_OFFLOAD_UDP_CKSUM;
+	}
+	if ((features & FF_TX_OFFLOAD_TCP_CKSUM) != 0) {
+		offloads |= RTE_ETH_TX_OFFLOAD_TCP_CKSUM;
+	}
+	if ((features & FF_TX_OFFLOAD_OUTER_IPV4_CKSUM) != 0) {
+		offloads |= RTE_ETH_TX_OFFLOAD_OUTER_IPV4_CKSUM;
+	}
+	return offloads;
+}
+
+int ff_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
+		uint32_t tx_offload_features) {
+	struct rte_eth_dev_info dev_info;
+	memset(&dev_info, 0, sizeof(dev_info));
+	int rc = rte_eth_dev_info_get(port_id, &dev_info);
+	if (rc < 0) {
+		return rc;
+	}
+
+	uint64_t tx_offloads = ff_dpdk_tx_offloads(tx_offload_features);
+	if ((tx_offloads & ~dev_info.tx_offload_capa) != 0) {
+		return -ENOTSUP;
+	}
+
 	struct rte_eth_conf port_conf;
 	memset(&port_conf, 0, sizeof(port_conf));
+	port_conf.txmode.offloads = tx_offloads;
 	return rte_eth_dev_configure(port_id, nb_rx_q, nb_tx_q, &port_conf);
+}
+
+int ff_eth_tx_queue_setup(uint16_t port_id, uint16_t queue_id, uint16_t nb_desc,
+		unsigned socket_id, uint32_t tx_offload_features) {
+	struct rte_eth_dev_info dev_info;
+	memset(&dev_info, 0, sizeof(dev_info));
+	int rc = rte_eth_dev_info_get(port_id, &dev_info);
+	if (rc < 0) {
+		return rc;
+	}
+
+	struct rte_eth_txconf tx_conf = dev_info.default_txconf;
+	tx_conf.offloads = ff_dpdk_tx_offloads(tx_offload_features);
+	return rte_eth_tx_queue_setup(port_id, queue_id, nb_desc, socket_id, &tx_conf);
 }
 
 int ff_eth_stats_get(uint16_t port_id, struct ff_eth_stats *out) {

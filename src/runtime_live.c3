@@ -150,6 +150,24 @@ struct SeedContext {
 	uint seeded;
 }
 
+struct SeedAuditContext {
+	char[] base;
+	File* output;
+	uint checked;
+	uint mismatches;
+	uint first_mismatch_index;
+	usz first_mismatch_offset;
+	bool write_failed;
+}
+
+// Binary seed-dump layout (all integer fields are little-endian):
+//   header: magic[8], version:u32, endian:u32, mbuf_size:u32,
+//           payload_size:u32, record_count:u32, record_size:u32
+//   record: object_index:u32, raw rte_mbuf[mbuf_size], payload[payload_size]
+// Pointer values in the raw mbuf are meaningful only in the producing process.
+const uint MBUF_DUMP_VERSION = 1;
+const uint MBUF_DUMP_ENDIAN_MARKER = 0x01020304;
+
 // --- offload --------------------------------------------------------------
 
 <* Applies a hardware-checksum offload request directly to an mbuf. DPDK flag
@@ -193,6 +211,15 @@ fn void apply_dpdk_offload(Mbuf* mbuf, PacketOffloadRequest request) {
 		mbuf.ol_flags &= ~dpdk::TX_L4_MASK;
 		mbuf.ol_flags |= request.tcp_checksum ? dpdk::TX_TCP_CKSUM : dpdk::TX_UDP_CKSUM;
 	}
+}
+
+fn uint requested_tx_offload_features(PacketOffloadRequest request) @private {
+	uint features = 0;
+	if (request.ipv4_checksum) features |= dpdk::FF_TX_OFFLOAD_IPV4_CKSUM;
+	if (request.udp_checksum) features |= dpdk::FF_TX_OFFLOAD_UDP_CKSUM;
+	if (request.tcp_checksum) features |= dpdk::FF_TX_OFFLOAD_TCP_CKSUM;
+	if (request.outer_ipv4_checksum) features |= dpdk::FF_TX_OFFLOAD_OUTER_IPV4_CKSUM;
+	return features;
 }
 
 // --- EAL / port helpers ---------------------------------------------------
@@ -240,9 +267,109 @@ fn void seed_mbuf_base_payload(Mempool* pool, void* opaque, void* obj, uint inde
 	context.seeded++;
 }
 
-fn Mempool* make_mbuf_pool(GeneratedPacket* packet, ulong worker_count, ushort batch_size, List{String}* errors) @private {
+fn bool write_dump_bytes(File* output, char[] bytes) @private {
+	sz? written = output.write(bytes);
+	if (catch written) return false;
+	return written >= 0 && (usz)written == bytes.len;
+}
+
+fn bool write_dump_u32(File* output, uint value) @private {
+	char[4] bytes = {
+		(char)(value & 0xff),
+		(char)((value >> 8) & 0xff),
+		(char)((value >> 16) & 0xff),
+		(char)((value >> 24) & 0xff),
+	};
+	return write_dump_bytes(output, bytes[..]);
+}
+
+fn bool write_mbuf_dump_header(File* output, uint payload_size, uint record_count) @private {
+	char[8] magic = { 'F', 'F', 'M', 'B', 'U', 'F', '0', '1' };
+	uint mbuf_size = (uint)Mbuf::size;
+	uint record_size = 4 + mbuf_size + payload_size;
+	return write_dump_bytes(output, magic[..]) &&
+		write_dump_u32(output, MBUF_DUMP_VERSION) &&
+		write_dump_u32(output, MBUF_DUMP_ENDIAN_MARKER) &&
+		write_dump_u32(output, mbuf_size) &&
+		write_dump_u32(output, payload_size) &&
+		write_dump_u32(output, record_count) &&
+		write_dump_u32(output, record_size);
+}
+
+fn void audit_seeded_mbuf(Mempool* pool, void* opaque, void* obj, uint index) @private {
+	SeedAuditContext* context = opaque;
+	Mbuf* mbuf = obj;
+	char[] payload = mbuf.mtod()[:context.base.len];
+
+	usz mismatch_offset = usz::max;
+	for (usz offset = 0; offset < context.base.len; offset++) {
+		if (payload[offset] != context.base[offset]) {
+			mismatch_offset = offset;
+			break;
+		}
+	}
+	if (mismatch_offset != usz::max) {
+		if (context.mismatches == 0) {
+			context.first_mismatch_index = index;
+			context.first_mismatch_offset = mismatch_offset;
+		}
+		context.mismatches++;
+	}
+
+	if (context.output != null && !context.write_failed) {
+		char[] raw_mbuf = ((char*)mbuf)[:Mbuf::size];
+		context.write_failed = !write_dump_u32(context.output, index) ||
+			!write_dump_bytes(context.output, raw_mbuf) ||
+			!write_dump_bytes(context.output, payload);
+	}
+	context.checked++;
+}
+
+fn bool audit_seeded_mbuf_pool(Mempool* pool, char[] base, uint expected_count, Maybe{String} dump_file, List{String}* errors) @private {
+	File out;
+	bool have_dump = false;
+
+	if (dump_file.has_value) {
+		File? opened = file::open(dump_file.value, "wb");
+		if (catch opened) {
+			errors.push(string::tformat("failed to open mempool seed dump '%s'", dump_file.value));
+			return false;
+		}
+		out = opened;
+		have_dump = true;
+		if (!write_mbuf_dump_header(&out, (uint)base.len, expected_count)) {
+			(void)out.close();
+			errors.push(string::tformat("failed to write mempool seed dump '%s'", dump_file.value));
+			return false;
+		}
+	}
+
+	SeedAuditContext context = { .base = base, .output = have_dump ? &out : null };
+	uint iterated = dpdk::rte_mempool_obj_iter(pool, &audit_seeded_mbuf, &context);
+	if (have_dump) (void)out.close();
+
+	if (iterated == 0 || context.checked != iterated) {
+		errors.push("failed to audit every seeded Tx mbuf");
+		return false;
+	}
+	if (context.write_failed) {
+		errors.push(string::tformat("failed while writing mempool seed dump '%s'", dump_file.value));
+		return false;
+	}
+	if (context.mismatches != 0) {
+		errors.push(string::tformat("Tx mempool seed validation found %d mismatched mbuf(s); first mismatch: object %d byte %d",
+			context.mismatches, context.first_mismatch_index, context.first_mismatch_offset));
+		return false;
+	}
+	if (have_dump) {
+		io::printfn("dumped %d validated Tx mbuf record(s) to '%s'", context.checked, dump_file.value);
+	}
+	return true;
+}
+
+fn Mempool* make_tx_mbuf_pool(GeneratedPacket* packet, ulong worker_count, ushort batch_size, Maybe{String} dump_file, List{String}* errors) @private {
 	Mempool* pool = dpdk::rte_pktmbuf_pool_create(
-		zstr("packet_runtime_mbuf_pool"),
+		zstr("packet_runtime_tx_mbuf_pool"),
 		mbuf_count_for(worker_count, batch_size),
 		RUNTIME_MBUF_CACHE_SIZE,
 		0,
@@ -257,6 +384,28 @@ fn Mempool* make_mbuf_pool(GeneratedPacket* packet, ulong worker_count, ushort b
 	uint iterated = dpdk::rte_mempool_obj_iter(pool, &seed_mbuf_base_payload, &context);
 	if (iterated == 0 || context.seeded != iterated) {
 		errors.push("failed to seed packet base payload into the mbuf pool");
+		dpdk::rte_mempool_free(pool);
+		return null;
+	}
+	if (!audit_seeded_mbuf_pool(pool, packet.base_payload, iterated, dump_file, errors)) {
+		dpdk::rte_mempool_free(pool);
+		return null;
+	}
+	return pool;
+}
+
+fn Mempool* make_rx_mbuf_pool(ushort rx_queue_count, List{String}* errors) @private {
+	ulong needed = (ulong)rx_queue_count * ((ulong)RUNTIME_RX_DESCRIPTORS + (ulong)RUNTIME_MAX_RX_BATCH_SIZE * 2) + RUNTIME_MBUF_CACHE_SIZE;
+	if (needed < RUNTIME_CAPTURE_MBUF_COUNT) needed = RUNTIME_CAPTURE_MBUF_COUNT;
+	Mempool* pool = dpdk::rte_pktmbuf_pool_create(
+		zstr("packet_runtime_rx_mbuf_pool"),
+		(uint)needed,
+		RUNTIME_MBUF_CACHE_SIZE,
+		0,
+		(ushort)dpdk::MBUF_DEFAULT_BUF_SIZE,
+		(int)dpdk::rte_socket_id());
+	if (pool == null) {
+		errors.push(string::tformat("Rx rte_pktmbuf_pool_create failed: %s", dpdk::strerror(dpdk::ff_rte_errno())));
 	}
 	return pool;
 }
@@ -282,7 +431,7 @@ fn bool probe_tap_port(List{String}* errors) @private {
 	return true;
 }
 
-fn bool configure_and_start_port(ushort port_id, ushort rx_queue_count, ushort tx_queue_count, Mempool* mbuf_pool, List{String}* errors, Result* result) @private {
+fn bool configure_and_start_port(ushort port_id, ushort rx_queue_count, ushort tx_queue_count, Mempool* mbuf_pool, uint tx_offload_features, List{String}* errors, Result* result) @private {
 	ushort port_count = dpdk::rte_eth_dev_count_avail();
 	if (port_count == 0) {
 		errors.push("no DPDK ethdev ports are available");
@@ -293,7 +442,7 @@ fn bool configure_and_start_port(ushort port_id, ushort rx_queue_count, ushort t
 		return false;
 	}
 
-	int rc = dpdk::ff_eth_dev_configure(port_id, rx_queue_count, tx_queue_count);
+	int rc = dpdk::ff_eth_dev_configure(port_id, rx_queue_count, tx_queue_count, tx_offload_features);
 	if (rc < 0) {
 		errors.push(string::tformat("rte_eth_dev_configure failed for port %d: %s", port_id, dpdk::strerror(-rc)));
 		return false;
@@ -309,7 +458,7 @@ fn bool configure_and_start_port(ushort port_id, ushort rx_queue_count, ushort t
 	}
 
 	for (ushort queue_id = 0; queue_id < tx_queue_count; queue_id++) {
-		rc = dpdk::rte_eth_tx_queue_setup(port_id, queue_id, RUNTIME_TX_DESCRIPTORS, (uint)socket, null);
+		rc = dpdk::ff_eth_tx_queue_setup(port_id, queue_id, RUNTIME_TX_DESCRIPTORS, (uint)socket, tx_offload_features);
 		if (rc < 0) {
 			errors.push(string::tformat("rte_eth_tx_queue_setup failed for port %d queue %d: %s", port_id, queue_id, dpdk::strerror(-rc)));
 			return false;
@@ -1029,11 +1178,13 @@ fn Result Runtime.run(&self, Program program, String eal_program_name, RunOption
 	install_signal_handlers();
 
 	bool port_started = false;
-	Mempool* pool = make_mbuf_pool(&generated.packet, tx_threads, batch_size, &result.errors);
-	if (pool != null && probe_tap_port(&result.errors) &&
-		configure_and_start_port(RUNTIME_PORT_ID, rx_queue_count, tx_queue_count, pool, &result.errors, &result)) {
+	Mempool* tx_pool = make_tx_mbuf_pool(&generated.packet, tx_threads, batch_size, options.mempool_seed_dump_file, &result.errors);
+	Mempool* rx_pool = make_rx_mbuf_pool(rx_queue_count, &result.errors);
+	uint tx_offload_features = requested_tx_offload_features(generated.packet.fixup_plan.offload);
+	if (tx_pool != null && rx_pool != null && probe_tap_port(&result.errors) &&
+		configure_and_start_port(RUNTIME_PORT_ID, rx_queue_count, tx_queue_count, rx_pool, tx_offload_features, &result.errors, &result)) {
 		port_started = true;
-		run_traffic(RUNTIME_PORT_ID, pool, &generated.packet, batch_size, tx_threads, rx_threads, options, &result.errors, &result, &workers, &rx_workers);
+		run_traffic(RUNTIME_PORT_ID, tx_pool, &generated.packet, batch_size, tx_threads, rx_threads, options, &result.errors, &result, &workers, &rx_workers);
 	}
 
 	if (port_started) {
@@ -1045,7 +1196,8 @@ fn Result Runtime.run(&self, Program program, String eal_program_name, RunOption
 		stop_and_close_port(RUNTIME_PORT_ID, &result.warnings);
 	}
 
-	if (pool != null) dpdk::rte_mempool_free(pool);
+	if (rx_pool != null) dpdk::rte_mempool_free(rx_pool);
+	if (tx_pool != null) dpdk::rte_mempool_free(tx_pool);
 	cleanup_eal(&result.warnings);
 
 	result.workers = workers.to_tarray();
@@ -1116,7 +1268,7 @@ fn void run_capture(Config config, String eal_program_name, RunOptions options, 
 	bool port_started = false;
 
 	if (probe_tap_port(&result.errors) &&
-		configure_and_start_port(RUNTIME_PORT_ID, rx_queue_count, tx_queue_count, pool, &result.errors, result)) {
+		configure_and_start_port(RUNTIME_PORT_ID, rx_queue_count, tx_queue_count, pool, 0, &result.errors, result)) {
 		port_started = true;
 
 		if (have_file) {

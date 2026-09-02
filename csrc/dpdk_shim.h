@@ -26,6 +26,15 @@ enum ff_offload_layer3 {
 	FF_OFFLOAD_L3_IPV6 = 2,
 };
 
+/* Stable C3-to-shim feature bits; the shim translates these to the DPDK
+ * version's RTE_ETH_TX_OFFLOAD_* values. */
+enum ff_tx_offload_feature {
+	FF_TX_OFFLOAD_IPV4_CKSUM = 1u << 0,
+	FF_TX_OFFLOAD_UDP_CKSUM = 1u << 1,
+	FF_TX_OFFLOAD_TCP_CKSUM = 1u << 2,
+	FF_TX_OFFLOAD_OUTER_IPV4_CKSUM = 1u << 3,
+};
+
 /* Aggregated ethdev counters we read back (subset of rte_eth_stats). */
 struct ff_eth_stats {
 	uint64_t ipackets;
@@ -56,8 +65,12 @@ uint16_t ff_eth_tx_burst(uint16_t port_id, uint16_t queue_id, struct rte_mbuf **
 uint16_t ff_eth_tx_prepare(uint16_t port_id, uint16_t queue_id, struct rte_mbuf **tx_pkts, uint16_t nb_pkts);
 uint16_t ff_eth_rx_burst(uint16_t port_id, uint16_t queue_id, struct rte_mbuf **rx_pkts, uint16_t nb_pkts);
 
-/* rte_eth_dev_configure with a zero-initialised rte_eth_conf. */
-int ff_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q);
+/* Configure the requested checksum features after validating the port's
+ * advertised capabilities. */
+int ff_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
+	uint32_t tx_offload_features);
+int ff_eth_tx_queue_setup(uint16_t port_id, uint16_t queue_id, uint16_t nb_desc,
+	unsigned socket_id, uint32_t tx_offload_features);
 int ff_eth_stats_get(uint16_t port_id, struct ff_eth_stats *out);
 
 /* Enumerates the worker (non-main) lcores into `out` (capacity `max`);
