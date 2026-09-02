@@ -370,7 +370,7 @@ fn bool audit_seeded_mbuf_pool(Mempool* pool, char[] base, uint expected_count, 
 
 fn Mempool* make_tx_mbuf_pool(GeneratedPacket* packet, ulong worker_count, ushort batch_size, Maybe{String} dump_file, List{String}* errors) @private {
 	Mempool* pool = dpdk::rte_pktmbuf_pool_create(
-		zstr("packet_runtime_tx_mbuf_pool"),
+		zstr("ffg_tx_pool"),
 		mbuf_count_for(worker_count, batch_size),
 		RUNTIME_MBUF_CACHE_SIZE,
 		0,
@@ -399,7 +399,7 @@ fn Mempool* make_rx_mbuf_pool(ushort rx_queue_count, List{String}* errors) @priv
 	ulong needed = (ulong)rx_queue_count * ((ulong)RUNTIME_RX_DESCRIPTORS + (ulong)RUNTIME_MAX_RX_BATCH_SIZE * 2) + RUNTIME_MBUF_CACHE_SIZE;
 	if (needed < RUNTIME_CAPTURE_MBUF_COUNT) needed = RUNTIME_CAPTURE_MBUF_COUNT;
 	Mempool* pool = dpdk::rte_pktmbuf_pool_create(
-		zstr("packet_runtime_rx_mbuf_pool"),
+		zstr("ffg_rx_pool"),
 		(uint)needed,
 		RUNTIME_MBUF_CACHE_SIZE,
 		0,
