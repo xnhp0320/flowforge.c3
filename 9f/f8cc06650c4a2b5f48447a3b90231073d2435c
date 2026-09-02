@@ -1,0 +1,21 @@
+src/runtime_live.c3
+  s_2ed911c8c6d8a9::t_41cccd1c51b870 21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "9ff8cc06650c4a2b5f48447a3b90231073d2435c",
+  "prompts": {},
+  "sessions": {
+    "s_2ed911c8c6d8a9": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a060fe-6ad8-75f0-92ef-dc8f1f803503",
+        "model": "unknown"
+      },
+      "human_author": "xnhp0320 <xnhp0320@gmail.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
