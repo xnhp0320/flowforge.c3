@@ -159,6 +159,7 @@ struct SeedAuditContext {
 	uint first_mismatch_index;
 	usz first_mismatch_offset;
 	bool write_failed;
+	bool validate_payload;
 }
 
 // Binary seed-dump layout (all integer fields are little-endian):
@@ -300,13 +301,15 @@ fn bool write_mbuf_dump_header(File* output, uint payload_size, uint record_coun
 fn void audit_seeded_mbuf(Mempool* pool, void* opaque, void* obj, uint index) @private {
 	SeedAuditContext* context = opaque;
 	Mbuf* mbuf = obj;
-	char[] payload = mbuf.mtod()[:context.base.len];
+	char[] payload = ((char*)mbuf.buf_addr + dpdk::MBUF_DEFAULT_HEADROOM)[:context.base.len];
 
 	usz mismatch_offset = usz::max;
-	for (usz offset = 0; offset < context.base.len; offset++) {
-		if (payload[offset] != context.base[offset]) {
-			mismatch_offset = offset;
-			break;
+	if (context.validate_payload) {
+		for (usz offset = 0; offset < context.base.len; offset++) {
+			if (payload[offset] != context.base[offset]) {
+				mismatch_offset = offset;
+				break;
+			}
 		}
 	}
 	if (mismatch_offset != usz::max) {
@@ -326,7 +329,7 @@ fn void audit_seeded_mbuf(Mempool* pool, void* opaque, void* obj, uint index) @p
 	context.checked++;
 }
 
-fn bool audit_seeded_mbuf_pool(Mempool* pool, char[] base, uint expected_count, Maybe{String} dump_file, List{String}* errors) @private {
+fn bool inspect_mbuf_pool(Mempool* pool, char[] base, uint expected_count, Maybe{String} dump_file, bool validate_payload, List{String}* errors) @private {
 	File out;
 	bool have_dump = false;
 
@@ -345,11 +348,15 @@ fn bool audit_seeded_mbuf_pool(Mempool* pool, char[] base, uint expected_count, 
 		}
 	}
 
-	SeedAuditContext context = { .base = base, .output = have_dump ? &out : null };
+	SeedAuditContext context = {
+		.base = base,
+		.output = have_dump ? &out : null,
+		.validate_payload = validate_payload,
+	};
 	uint iterated = dpdk::rte_mempool_obj_iter(pool, &audit_seeded_mbuf, &context);
 	if (have_dump) (void)out.close();
 
-	if (iterated == 0 || context.checked != iterated) {
+	if (iterated == 0 || iterated != expected_count || context.checked != iterated) {
 		errors.push("failed to audit every seeded Tx mbuf");
 		return false;
 	}
@@ -357,13 +364,13 @@ fn bool audit_seeded_mbuf_pool(Mempool* pool, char[] base, uint expected_count, 
 		errors.push(string::tformat("failed while writing mempool seed dump '%s'", dump_file.value));
 		return false;
 	}
-	if (context.mismatches != 0) {
+	if (validate_payload && context.mismatches != 0) {
 		errors.push(string::tformat("Tx mempool seed validation found %d mismatched mbuf(s); first mismatch: object %d byte %d",
 			context.mismatches, context.first_mismatch_index, context.first_mismatch_offset));
 		return false;
 	}
 	if (have_dump) {
-		io::printfn("dumped %d validated Tx mbuf record(s) to '%s'", context.checked, dump_file.value);
+		io::printfn("dumped %d Tx mbuf record(s) to '%s'", context.checked, dump_file.value);
 	}
 	return true;
 }
@@ -388,7 +395,9 @@ fn Mempool* make_tx_mbuf_pool(GeneratedPacket* packet, ulong worker_count, ushor
 		dpdk::rte_mempool_free(pool);
 		return null;
 	}
-	if (!audit_seeded_mbuf_pool(pool, packet.base_payload, iterated, dump_file, errors)) {
+	Maybe{String} pre_dump_file;
+	if (dump_file.has_value) pre_dump_file.set(string::tformat("%s.pre", dump_file.value));
+	if (!inspect_mbuf_pool(pool, packet.base_payload, iterated, pre_dump_file, true, errors)) {
 		dpdk::rte_mempool_free(pool);
 		return null;
 	}
@@ -1195,6 +1204,12 @@ fn Result Runtime.run(&self, Program program, String eal_program_name, RunOption
 			result.rx_errors = stats.ierrors;
 		}
 		stop_and_close_port(RUNTIME_PORT_ID, &result.warnings);
+		if (options.mempool_seed_dump_file.has_value && tx_pool != null) {
+			Maybe{String} post_dump_file;
+			post_dump_file.set(string::tformat("%s.post", options.mempool_seed_dump_file.value));
+			(void)inspect_mbuf_pool(tx_pool, generated.packet.base_payload,
+				mbuf_count_for(tx_threads, batch_size), post_dump_file, false, &result.errors);
+		}
 	}
 
 	if (rx_pool != null) dpdk::rte_mempool_free(rx_pool);
