@@ -3,6 +3,55 @@ import flowforge::runtime;
 import flowforge::dpdk;
 import flowforge::serializer;
 
+ushort recorded_rss_port;
+uint recorded_rss_mask_bits;
+
+struct RecordedDriver (dpdk::DriverOps) {
+	uint mask_bits;
+}
+
+fn int RecordedDriver.set_rss(&self, ushort port_id) @dynamic {
+	recorded_rss_port = port_id;
+	recorded_rss_mask_bits = self.mask_bits;
+	return -17;
+}
+
+fn void test_xsl_rss_queue_count_conversion() @test {
+	uint mask_bits;
+	assert(dpdk::rss_lb_mask_bits(1, &mask_bits) && mask_bits == 0);
+	assert(dpdk::rss_lb_mask_bits(2, &mask_bits) && mask_bits == 1);
+	assert(dpdk::rss_lb_mask_bits(4, &mask_bits) && mask_bits == 2);
+	assert(dpdk::rss_lb_mask_bits(8, &mask_bits) && mask_bits == 3);
+	assert(!dpdk::rss_lb_mask_bits(0, &mask_bits));
+	assert(!dpdk::rss_lb_mask_bits(3, &mask_bits));
+	assert(!dpdk::rss_lb_mask_bits(6, &mask_bits));
+}
+
+fn void test_xsl_driver_interface_dispatches_stored_operation() @test {
+	RecordedDriver recorded_driver = { .mask_bits = 3 };
+	dpdk::DriverOps driver_ops = &recorded_driver;
+	int rc = driver_ops.set_rss(7);
+
+	assert(rc == -17);
+	assert(recorded_rss_port == 7);
+	assert(recorded_rss_mask_bits == 3);
+}
+
+fn void test_xsl_driver_name_selection_is_exact() @test {
+	assert(dpdk::is_xsl_driver("net_xsl"));
+	assert(!dpdk::is_xsl_driver("net_tap"));
+	assert(!dpdk::is_xsl_driver("xsl"));
+}
+
+fn void test_unstarted_live_port_run_fails_with_warning_only() @test {
+	Result result;
+	result.tinit();
+	result.warnings.push("invalid XSL RX queue count");
+	runtime::finish_live_port_run(&result, false);
+	assert(!result.ok);
+	assert(result.errors.len() == 0);
+}
+
 <* Mirrors RuntimeTest.AppliesDpdkOffloadRequestToMbufMetadata. Exercises the
    real C3 offload wrapper + C shim against a standalone (EAL-free) mbuf. *>
 fn void test_applies_dpdk_offload_request_to_mbuf_metadata() @test {

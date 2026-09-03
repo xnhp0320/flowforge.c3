@@ -81,6 +81,43 @@ fn void Mbuf.reset_offload(&self) @inline {
 
 alias LcoreFunction = fn int(void* arg);
 alias MempoolObjCb = fn void(Mempool* pool, void* opaque, void* obj, uint index);
+interface DriverOps {
+	fn int set_rss(ushort port_id);
+}
+
+struct XslDriver (DriverOps) @feat(XSL_DPDK) {
+	uint mask_bits;
+}
+
+fn int XslDriver.set_rss(&self, ushort port_id) @dynamic @feat(XSL_DPDK) {
+	return ff_xsl_set_rss(port_id, self.mask_bits);
+}
+
+fn DriverOps alloc_xsl_driver(uint mask_bits) @feat(XSL_DPDK) {
+	XslDriver* driver = mem::new(XslDriver);
+	*driver = {};
+	driver.mask_bits = mask_bits;
+	return driver;
+}
+
+fn bool is_xsl_driver(String driver_name) => driver_name == "net_xsl";
+
+<* Converts a power-of-two RX queue count to the XSL RSS load-balancer mask
+   width. Returns false for zero and non-power-of-two counts. *>
+fn bool rss_lb_mask_bits(ushort rx_queue_count, uint* mask_bits) {
+	if (rx_queue_count == 0 || (rx_queue_count & (rx_queue_count - 1)) != 0) {
+		return false;
+	}
+
+	uint bits = 0;
+	ushort remaining = rx_queue_count;
+	while (remaining > 1) {
+		remaining >>= 1;
+		bits++;
+	}
+	*mask_bits = bits;
+	return true;
+}
 
 // Mirrors serializer::OffloadLayer3 / enum ff_offload_layer3 in the shim.
 const int FF_OFFLOAD_L3_NONE = 0;
@@ -170,6 +207,8 @@ extern fn ushort ff_eth_rx_burst(ushort port_id, ushort queue_id, Mbuf** rx_pkts
 extern fn int ff_eth_dev_configure(ushort port_id, ushort nb_rx_q, ushort nb_tx_q, uint tx_offload_features);
 extern fn int ff_eth_tx_queue_setup(ushort port_id, ushort queue_id, ushort nb_desc, uint socket_id, uint tx_offload_features);
 extern fn int ff_eth_stats_get(ushort port_id, EthStats* out);
+extern fn int ff_eth_dev_driver_name(ushort port_id, char* out, usz out_len);
+extern fn int ff_xsl_set_rss(ushort port_id, uint mask_bits) @feat(XSL_DPDK);
 
 // --- shim: lcore enumeration / tap / test --------------------------------
 extern fn uint ff_worker_lcores(uint* out, uint max);

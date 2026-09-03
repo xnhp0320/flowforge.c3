@@ -9,6 +9,10 @@
 #include <rte_mbuf_core.h>
 #include <rte_mempool.h>
 
+#ifdef FLOWFORGE_XSL_DPDK
+#include <xsl_pmd_config.h>
+#endif
+
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -143,6 +147,38 @@ int ff_eth_stats_get(uint16_t port_id, struct ff_eth_stats *out) {
 	}
 	return rc;
 }
+
+int ff_eth_dev_driver_name(uint16_t port_id, char *out, size_t out_len) {
+	if (out == NULL || out_len == 0) {
+		return -EINVAL;
+	}
+
+	struct rte_eth_dev_info dev_info;
+	memset(&dev_info, 0, sizeof(dev_info));
+	int rc = rte_eth_dev_info_get(port_id, &dev_info);
+	if (rc < 0) {
+		return rc;
+	}
+	if (dev_info.driver_name == NULL) {
+		return -ENODEV;
+	}
+
+	size_t driver_name_len = strlen(dev_info.driver_name);
+	if (driver_name_len >= out_len) {
+		return -ENOSPC;
+	}
+	memcpy(out, dev_info.driver_name, driver_name_len + 1);
+	return 0;
+}
+
+#ifdef FLOWFORGE_XSL_DPDK
+int ff_xsl_set_rss(uint16_t port_id, uint32_t mask_bits) {
+	if (mask_bits > UINT8_MAX) {
+		return -EINVAL;
+	}
+	return xsl_pmd_cfg_rss_lb_mask(port_id, (uint8_t)mask_bits);
+}
+#endif
 
 /* --- lcore enumeration --------------------------------------------------- */
 

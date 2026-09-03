@@ -72,6 +72,11 @@ int ff_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 int ff_eth_tx_queue_setup(uint16_t port_id, uint16_t queue_id, uint16_t nb_desc,
 	unsigned socket_id, uint32_t tx_offload_features);
 int ff_eth_stats_get(uint16_t port_id, struct ff_eth_stats *out);
+int ff_eth_dev_driver_name(uint16_t port_id, char *out, size_t out_len);
+
+#ifdef FLOWFORGE_XSL_DPDK
+int ff_xsl_set_rss(uint16_t port_id, uint32_t mask_bits);
+#endif
 
 /* Enumerates the worker (non-main) lcores into `out` (capacity `max`);
  * returns the number of worker lcores available. */

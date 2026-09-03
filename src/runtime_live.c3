@@ -32,6 +32,7 @@ const ushort RUNTIME_MAX_RX_BATCH_SIZE = 128;
 const uint RUNTIME_CAPTURE_MBUF_COUNT = 8191;
 const usz RUNTIME_MAX_LCORES = 128;
 const usz RUNTIME_CACHE_LINE_SIZE = 64;
+const usz RUNTIME_DRIVER_NAME_SIZE = 128;
 
 // DPDK worker lcores run on threads that c3c never sees, so they have no
 // implicitly-created temp allocator. Each worker entry point installs its own
@@ -53,6 +54,7 @@ const int SIGINT = 2;
 const int SIGTERM = 15;
 
 bool runtime_stop_requested @private = false;
+dpdk::DriverOps runtime_driver_ops @private;
 
 fn void request_runtime_stop(int sig) @private {
 	runtime_stop_requested = true;
@@ -243,11 +245,20 @@ fn int init_eal(String[] dpdk_args, String eal_program_name, Result* result, Lis
 	return parsed;
 }
 
+fn void free_port_driver_ops() @private {
+	if (runtime_driver_ops == null) return;
+	// Driver factories return an interface over the root heap allocation.
+	void* driver = (void*)runtime_driver_ops;
+	runtime_driver_ops = {};
+	mem::free(driver);
+}
+
 fn void cleanup_eal(List{String}* warnings) @private {
 	int rc = dpdk::rte_eal_cleanup();
 	if (rc < 0) {
 		warnings.push(string::tformat("rte_eal_cleanup failed: %s", dpdk::strerror(dpdk::ff_rte_errno())));
 	}
+	free_port_driver_ops();
 }
 
 fn uint mbuf_count_for(ulong worker_count, ushort batch_size) @private {
@@ -441,6 +452,30 @@ fn bool probe_tap_port(List{String}* errors) @private {
 	return true;
 }
 
+fn bool init_port_driver_ops(String driver_name, ushort rx_queue_count, Result* result) @private @feat(XSL_DPDK) {
+	free_port_driver_ops();
+	if (!dpdk::is_xsl_driver(driver_name)) return true;
+	uint mask_bits;
+	if (!dpdk::rss_lb_mask_bits(rx_queue_count, &mask_bits)) {
+		result.warnings.push(string::tformat(
+			"XSL port requires a power-of-two RX queue count; got %d", rx_queue_count));
+		result.ok = false;
+		return false;
+	}
+
+	runtime_driver_ops = dpdk::alloc_xsl_driver(mask_bits);
+	return true;
+}
+
+fn bool init_port_driver_ops(String driver_name, ushort rx_queue_count, Result* result) @private @feat(!XSL_DPDK) {
+	free_port_driver_ops();
+	return true;
+}
+
+fn void finish_live_port_run(Result* result, bool port_started) {
+	result.ok = port_started && result.errors.len() == 0;
+}
+
 fn bool configure_and_start_port(ushort port_id, ushort rx_queue_count, ushort tx_queue_count, Mempool* mbuf_pool, uint tx_offload_features, List{String}* errors, Result* result) @private {
 	ushort port_count = dpdk::rte_eth_dev_count_avail();
 	if (port_count == 0) {
@@ -452,7 +487,17 @@ fn bool configure_and_start_port(ushort port_id, ushort rx_queue_count, ushort t
 		return false;
 	}
 
-	int rc = dpdk::ff_eth_dev_configure(port_id, rx_queue_count, tx_queue_count, tx_offload_features);
+	char[RUNTIME_DRIVER_NAME_SIZE] driver_name_buffer;
+	driver_name_buffer[0] = 0;
+	int rc = dpdk::ff_eth_dev_driver_name(port_id, &driver_name_buffer[0], RUNTIME_DRIVER_NAME_SIZE);
+	if (rc < 0) {
+		errors.push(string::tformat("failed to get DPDK driver name for port %d: %s", port_id, dpdk::strerror(-rc)));
+		return false;
+	}
+	String driver_name = ((ZString)&driver_name_buffer[0]).str_view();
+	if (!init_port_driver_ops(driver_name, rx_queue_count, result)) return false;
+
+	rc = dpdk::ff_eth_dev_configure(port_id, rx_queue_count, tx_queue_count, tx_offload_features);
 	if (rc < 0) {
 		errors.push(string::tformat("rte_eth_dev_configure failed for port %d: %s", port_id, dpdk::strerror(-rc)));
 		return false;
@@ -471,6 +516,16 @@ fn bool configure_and_start_port(ushort port_id, ushort rx_queue_count, ushort t
 		rc = dpdk::ff_eth_tx_queue_setup(port_id, queue_id, RUNTIME_TX_DESCRIPTORS, (uint)socket, tx_offload_features);
 		if (rc < 0) {
 			errors.push(string::tformat("rte_eth_tx_queue_setup failed for port %d queue %d: %s", port_id, queue_id, dpdk::strerror(-rc)));
+			return false;
+		}
+	}
+
+	if (runtime_driver_ops != null) {
+		rc = runtime_driver_ops.set_rss(port_id);
+		if (rc < 0) {
+			errors.push(string::tformat(
+				"driver set_rss failed for port %d with %d RX queue(s): %s",
+				port_id, rx_queue_count, dpdk::strerror(-rc)));
 			return false;
 		}
 	}
@@ -1218,7 +1273,7 @@ fn Result Runtime.run(&self, Program program, String eal_program_name, RunOption
 
 	result.workers = workers.to_tarray();
 	result.rx_workers = rx_workers.to_tarray();
-	result.ok = result.errors.len() == 0;
+	finish_live_port_run(&result, port_started);
 	return result;
 }
 
@@ -1342,5 +1397,5 @@ fn void run_capture(Config config, String eal_program_name, RunOptions options, 
 	if (have_file) (void)out.close();
 	dpdk::rte_mempool_free(pool);
 	cleanup_eal(&result.warnings);
-	result.ok = result.errors.len() == 0;
+	finish_live_port_run(result, port_started);
 }
