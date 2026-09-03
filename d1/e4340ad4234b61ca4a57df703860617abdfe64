@@ -1,0 +1,35 @@
+csrc/dpdk_shim.c
+  s_016055ad021c08::t_b80a71becd6c8d 12-15,151-182
+csrc/dpdk_shim.h
+  s_016055ad021c08::t_2ca6a504af60b6 75-79
+project.e2.json
+  s_016055ad021c08::t_35703efbc95e89 8,15
+src/runtime_live.c3
+  s_1466469df6c272::t_3a653ab190d0a5 35,57,248-255,261,455-478,490-500,523-532,1276,1400
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "d1e4340ad4234b61ca4a57df703860617abdfe64",
+  "prompts": {},
+  "sessions": {
+    "s_016055ad021c08": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a06567-9b9d-75d2-8584-81bb51b2e5b9",
+        "model": "unknown"
+      },
+      "human_author": "xnhp0320 <xnhp0320@gmail.com>"
+    },
+    "s_1466469df6c272": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a065bb-52ce-77a2-a79f-f8cd4f73ca65",
+        "model": "unknown"
+      },
+      "human_author": "xnhp0320 <xnhp0320@gmail.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
