@@ -193,3 +193,33 @@ with `-c`. Duplicate variable names are rejected.
 - `csrc/` — C shim wrapping the DPDK macros / inline helpers the C3 side needs
 - `test/` — unit tests
 - `examples/` — sample packet programs (copied from packet_editor)
+
+### Multiple DPDK ports
+
+The live runtime uses every available ethdev discovered after EAL initialization.
+If EAL provides no ports, it creates the existing `packet_tap0` fallback.
+`PMD_THREADS` and `RX_THREADS` are total worker counts: each enabled direction
+must divide evenly across the ports. Worker IDs are global within TX/RX; queue
+IDs restart at zero on each port. Omitted TX counts default to one worker per
+port. RX is disabled by default during TX; capture-only defaults to one RX
+worker per port. Provide enough EAL worker lcores for both totals.
+
+For two TAP ports, this assigns two TX and two RX workers per port:
+
+```text
+DPDK_ARGS: "--no-huge --no-pci -m 256 -l 0-8 --vdev=net_tap0,iface=ffg0 --vdev=net_tap1,iface=ffg1"
+PMD_THREADS: 4
+RX_THREADS: 4
+PACKET: Ether()/IP(src="[192.0.2.1-192.0.2.5]")/UDP()
+```
+
+`--split` distributes the complete flow set within each port's TX group; without
+it, every TX worker sends the complete set. `PACKET_COUNT` applies to each port's
+flow set. Live statistics and completion output group worker rows under each
+port and retain overall totals. Device misses/errors are per-port counters;
+RX bit rates use received bytes. `--capture <file.pcap>` remains single-port
+only, while capture without a file supports all ports. Check-only results are
+single-port estimates; actual worker defaults and totals resolve after EAL.
+
+Driver constraints still apply: TAP requires equal configured TX/RX queue counts;
+XSL requires a power-of-two RX queue count per port.

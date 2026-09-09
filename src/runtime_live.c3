@@ -23,7 +23,7 @@ import std::io;
 import std::io::file;
 
 // --- runtime constants (mirror runtime.cpp) -------------------------------
-const ushort RUNTIME_PORT_ID = 0;
+
 const ushort RUNTIME_RX_DESCRIPTORS = 128;
 const ushort RUNTIME_TX_DESCRIPTORS = 512;
 const uint RUNTIME_MBUF_CACHE_SIZE = 250;
@@ -54,7 +54,7 @@ const int SIGINT = 2;
 const int SIGTERM = 15;
 
 bool runtime_stop_requested @private = false;
-dpdk::DriverOps runtime_driver_ops @private;
+
 
 fn void request_runtime_stop(int sig) @private {
 	runtime_stop_requested = true;
@@ -115,6 +115,7 @@ struct RxWorkerContext {
 }
 
 struct WorkerStatsView {
+	ushort port_id;
 	ulong worker_id;
 	ulong lcore_id;
 	ushort queue_id;
@@ -125,6 +126,7 @@ struct WorkerStatsView {
 }
 
 struct RxWorkerStatsView {
+	ushort port_id;
 	ulong worker_id;
 	ulong lcore_id;
 	ushort queue_id;
@@ -135,8 +137,9 @@ struct RxWorkerStatsView {
 struct LiveStatsState {
 	ulong[RUNTIME_MAX_LCORES] previous_tx_sent;
 	ulong[RUNTIME_MAX_LCORES] previous_rx_received;
-	ulong previous_imissed;
-	ulong previous_ierrors;
+	ulong[RUNTIME_MAX_LCORES] previous_rx_bytes;
+	ulong[RUNTIME_MAX_LCORES] previous_imissed;
+	ulong[RUNTIME_MAX_LCORES] previous_ierrors;
 	long start;
 	long last;
 	long next;
@@ -245,20 +248,11 @@ fn int init_eal(String[] dpdk_args, String eal_program_name, Result* result, Lis
 	return parsed;
 }
 
-fn void free_port_driver_ops() @private {
-	if (runtime_driver_ops == null) return;
-	// Driver factories return an interface over the root heap allocation.
-	void* driver = (void*)runtime_driver_ops;
-	runtime_driver_ops = {};
-	mem::free(driver);
-}
-
 fn void cleanup_eal(List{String}* warnings) @private {
 	int rc = dpdk::rte_eal_cleanup();
 	if (rc < 0) {
 		warnings.push(string::tformat("rte_eal_cleanup failed: %s", dpdk::strerror(dpdk::ff_rte_errno())));
 	}
-	free_port_driver_ops();
 }
 
 fn uint mbuf_count_for(ulong worker_count, ushort batch_size) @private {
@@ -452,8 +446,7 @@ fn bool probe_tap_port(List{String}* errors) @private {
 	return true;
 }
 
-fn bool init_port_driver_ops(String driver_name, ushort rx_queue_count, Result* result) @private @feat(XSL_DPDK) {
-	free_port_driver_ops();
+fn bool init_port_driver_ops(String driver_name, ushort rx_queue_count, Result* result, dpdk::DriverOps* ops) @private @feat(XSL_DPDK) {
 	if (!dpdk::is_xsl_driver(driver_name)) return true;
 	uint mask_bits;
 	if (!dpdk::rss_lb_mask_bits(rx_queue_count, &mask_bits)) {
@@ -463,12 +456,11 @@ fn bool init_port_driver_ops(String driver_name, ushort rx_queue_count, Result* 
 		return false;
 	}
 
-	runtime_driver_ops = dpdk::alloc_xsl_driver(mask_bits);
+	*ops = dpdk::alloc_xsl_driver(mask_bits);
 	return true;
 }
 
-fn bool init_port_driver_ops(String driver_name, ushort rx_queue_count, Result* result) @private @feat(!XSL_DPDK) {
-	free_port_driver_ops();
+fn bool init_port_driver_ops(String driver_name, ushort rx_queue_count, Result* result, dpdk::DriverOps* ops) @private @feat(!XSL_DPDK) {
 	return true;
 }
 
@@ -482,7 +474,13 @@ fn bool configure_and_start_port(ushort port_id, ushort rx_queue_count, ushort t
 		errors.push("no DPDK ethdev ports are available");
 		return false;
 	}
-	if (port_id >= port_count) {
+	ushort[RUNTIME_MAX_LCORES] available;
+	uint count = dpdk::ff_eth_port_ids(&available[0], (uint)RUNTIME_MAX_LCORES);
+	bool found = false;
+	for (uint i = 0; i < count && i < RUNTIME_MAX_LCORES; i++) {
+		if (available[i] == port_id) found = true;
+	}
+	if (!found) {
 		errors.push(string::tformat("requested DPDK port %d but only %d port(s) are available", port_id, port_count));
 		return false;
 	}
@@ -495,7 +493,11 @@ fn bool configure_and_start_port(ushort port_id, ushort rx_queue_count, ushort t
 		return false;
 	}
 	String driver_name = ((ZString)&driver_name_buffer[0]).str_view();
-	if (!init_port_driver_ops(driver_name, rx_queue_count, result)) return false;
+	dpdk::DriverOps driver_ops = {};
+	if (!init_port_driver_ops(driver_name, rx_queue_count, result, &driver_ops)) return false;
+	defer {
+		if (driver_ops != null) mem::free((void*)driver_ops);
+	}
 
 	rc = dpdk::ff_eth_dev_configure(port_id, rx_queue_count, tx_queue_count, tx_offload_features);
 	if (rc < 0) {
@@ -503,6 +505,13 @@ fn bool configure_and_start_port(ushort port_id, ushort rx_queue_count, ushort t
 		return false;
 	}
 
+	bool ready = false;
+	defer {
+		if (!ready) {
+			(void)dpdk::rte_eth_dev_stop(port_id);
+			(void)dpdk::rte_eth_dev_close(port_id);
+		}
+	}
 	int socket = dpdk::rte_eth_dev_socket_id(port_id);
 	for (ushort queue_id = 0; queue_id < rx_queue_count; queue_id++) {
 		rc = dpdk::rte_eth_rx_queue_setup(port_id, queue_id, RUNTIME_RX_DESCRIPTORS, (uint)socket, null, mbuf_pool);
@@ -520,8 +529,8 @@ fn bool configure_and_start_port(ushort port_id, ushort rx_queue_count, ushort t
 		}
 	}
 
-	if (runtime_driver_ops != null) {
-		rc = runtime_driver_ops.set_rss(port_id);
+	if (driver_ops != null) {
+		rc = driver_ops.set_rss(port_id);
 		if (rc < 0) {
 			errors.push(string::tformat(
 				"driver set_rss failed for port %d with %d RX queue(s): %s",
@@ -539,12 +548,11 @@ fn bool configure_and_start_port(ushort port_id, ushort rx_queue_count, ushort t
 	rc = dpdk::rte_eth_promiscuous_enable(port_id);
 	if (rc < 0) {
 		errors.push(string::tformat("rte_eth_promiscuous_enable failed for port %d: %s", port_id, dpdk::strerror(-rc)));
-		(void)dpdk::rte_eth_dev_stop(port_id);
-		(void)dpdk::rte_eth_dev_close(port_id);
 		return false;
 	}
 
-	result.port_id = port_id;
+
+	ready = true;
 	return true;
 }
 
@@ -751,7 +759,7 @@ fn int run_rx_worker_impl(RxWorkerContext* context) @private {
 	return 0;
 }
 
-fn FlowRange assigned_flow_range(ulong planned_flows, ulong worker_count, ulong worker_id, bool split) @private {
+fn FlowRange assigned_flow_range(ulong planned_flows, ulong worker_count, ulong worker_id, bool split) {
 	if (!split) {
 		return { .first = 0, .count = planned_flows };
 	}
@@ -766,6 +774,7 @@ fn WorkerResult make_worker_result(WorkerContext* context) @private {
 	return {
 		.worker_id = context.worker_id,
 		.lcore_id = context.lcore_id,
+		.port_id = context.port_id,
 		.queue_id = context.queue_id,
 		.first_flow = context.first_flow,
 		.flow_count = context.flow_count,
@@ -778,6 +787,7 @@ fn WorkerResult make_rx_worker_result(RxWorkerContext* context) @private {
 	return {
 		.worker_id = context.worker_id,
 		.lcore_id = context.lcore_id,
+		.port_id = context.port_id,
 		.queue_id = context.queue_id,
 		.rx_received = context.rx_received,
 		.rx_bytes = context.rx_bytes,
@@ -788,6 +798,7 @@ fn WorkerStatsView make_worker_stats_view(WorkerContext* context) @private {
 	WorkerStatsView view = {
 		.worker_id = context.worker_id,
 		.lcore_id = context.lcore_id,
+		.port_id = context.port_id,
 		.queue_id = context.queue_id,
 		.first_flow = context.first_flow,
 		.flow_count = context.flow_count,
@@ -805,6 +816,7 @@ fn RxWorkerStatsView make_rx_worker_stats_view(RxWorkerContext* context) @privat
 	RxWorkerStatsView view = {
 		.worker_id = context.worker_id,
 		.lcore_id = context.lcore_id,
+		.port_id = context.port_id,
 		.queue_id = context.queue_id,
 		.rx_received = context.rx_received,
 		.rx_bytes = context.rx_bytes,
@@ -822,114 +834,84 @@ fn ulong counter_delta(ulong current, ulong previous) @private {
 	return current >= previous ? current - previous : 0;
 }
 
-fn void print_live_stats(WorkerContext[] tx_ctxs, RxWorkerContext[] rx_ctxs, ushort port_id, usz packet_len, ushort batch_size, RunOptions options, LiveStatsState* state, long now) @private {
+fn void print_live_stats(WorkerContext[] tx_ctxs, RxWorkerContext[] rx_ctxs, ushort[] ports, usz packet_len, ushort batch_size, RunOptions options, LiveStatsState* state, long now) @private {
 	@pool() {
-		ulong elapsed = (ulong)(now - state.start);
-		double sample_seconds = (double)(now - state.last);
-		if (sample_seconds <= 0.0) sample_seconds = 1.0;
+		double seconds = (double)(now - state.last);
+		if (seconds <= 0.0) seconds = 1.0;
 		state.last = now;
-
-		ulong total_tx_sent = 0;
-		ulong total_tx_attempted = 0;
-		ulong total_tx_delta = 0;
-		ulong[RUNTIME_MAX_LCORES] tx_deltas;
-		for (usz i = 0; i < tx_ctxs.len; i++) {
-			WorkerStatsView worker = make_worker_stats_view(&tx_ctxs[i]);
-			ulong delta = counter_delta(worker.tx_sent, state.previous_tx_sent[i]);
-			state.previous_tx_sent[i] = worker.tx_sent;
-			tx_deltas[i] = delta;
-			total_tx_sent += worker.tx_sent;
-			total_tx_attempted += worker.tx_attempted;
-			total_tx_delta += delta;
-		}
-
-		ulong total_rx_received = 0;
-		ulong total_rx_bytes = 0;
-		ulong total_rx_delta = 0;
-		ulong[RUNTIME_MAX_LCORES] rx_deltas;
-		for (usz i = 0; i < rx_ctxs.len; i++) {
-			RxWorkerStatsView worker = make_rx_worker_stats_view(&rx_ctxs[i]);
-			ulong delta = counter_delta(worker.rx_received, state.previous_rx_received[i]);
-			state.previous_rx_received[i] = worker.rx_received;
-			rx_deltas[i] = delta;
-			total_rx_received += worker.rx_received;
-			total_rx_bytes += worker.rx_bytes;
-			total_rx_delta += delta;
-		}
-
-		double total_tx_pps = (double)total_tx_delta / sample_seconds;
-		double total_tx_bps = total_tx_pps * (double)packet_len * 8.0;
-		double total_rx_pps = (double)total_rx_delta / sample_seconds;
-		double total_rx_bps = total_rx_pps * (double)packet_len * 8.0;
-
-		EthStats stats;
-		stats = {};
-		(void)dpdk::ff_eth_stats_get(port_id, &stats);
-		ulong imiss_delta = counter_delta(stats.imissed, state.previous_imissed);
-		ulong ierrors_delta = counter_delta(stats.ierrors, state.previous_ierrors);
-		state.previous_imissed = stats.imissed;
-		state.previous_ierrors = stats.ierrors;
-
 		io::printf("\033[2J\033[H");
-		io::printn("FlowForge live stats\n");
-		io::printfn("elapsed: %s", stats_format::format_elapsed_seconds(elapsed));
+		io::printn("FlowForge live stats");
+		io::printfn("elapsed: %s", stats_format::format_elapsed_seconds((ulong)(now - state.start)));
 		io::printfn("packet_len: %d bytes", packet_len);
 		io::printfn("tx_queues: %d    rx_queues: %d", tx_ctxs.len, rx_ctxs.len);
 		io::printfn("tx_batch_size: %d    clone_count: %d", batch_size, options.clone_count);
-		io::printfn("split: %s      once: %s\n", options.split ? "on" : "off", options.once ? "on" : "off");
-
-		if (tx_ctxs.len > 0) {
+		io::printfn("split: %s      once: %s", options.split ? "on" : "off", options.once ? "on" : "off");
+		ulong all_tx = 0;
+		ulong all_rx = 0;
+		ulong all_bytes = 0;
+		double all_tx_pps = 0;
+		double all_rx_pps = 0;
+		double all_rx_bps = 0;
+		foreach (pi, port : ports) {
+			ulong sent = 0;
+			ulong received = 0;
+			ulong bytes = 0;
+			double tx_pps = 0;
+			double rx_pps = 0;
+			double rx_bps = 0;
+			io::printfn("\nport %d:", port);
 			io::printn("tx workers:");
-			io::printfn("  %-4s%-8s%-8s%-14s%-14s%-14s%-12s%s", "id", "lcore", "queue", "flows", "sent", "attempted", "pps", "bps");
-			for (usz i = 0; i < tx_ctxs.len; i++) {
-				WorkerStatsView worker = make_worker_stats_view(&tx_ctxs[i]);
-				double worker_pps = (double)tx_deltas[i] / sample_seconds;
-				double worker_bps = worker_pps * (double)packet_len * 8.0;
-				io::printfn("  %-4d%-8d%-8d%-14s%-14s%-14s%-12s%s",
-					worker.worker_id,
-					worker.lcore_id,
-					worker.queue_id,
-					string::tformat("%d+%d", worker.first_flow, worker.flow_count),
-					stats_format::format_human_count((double)worker.tx_sent),
-					stats_format::format_human_count((double)worker.tx_attempted),
-					stats_format::format_human_rate(worker_pps, "pps"),
-					stats_format::format_human_rate(worker_bps, "bps"));
+			foreach (i, ctx : tx_ctxs) {
+				if (ctx.port_id != port) continue;
+				WorkerStatsView w = make_worker_stats_view(&tx_ctxs[i]);
+				double pps = (double)counter_delta(w.tx_sent, state.previous_tx_sent[i]) / seconds;
+				state.previous_tx_sent[i] = w.tx_sent;
+				sent += w.tx_sent;
+				tx_pps += pps;
+				io::printfn("  id %d lcore %d queue %d flows %d+%d sent %d attempted %d %s %s",
+					w.worker_id, w.lcore_id, w.queue_id, w.first_flow, w.flow_count, w.tx_sent, w.tx_attempted,
+					stats_format::format_human_rate(pps, "pps"), stats_format::format_human_rate(pps * (double)packet_len * 8.0, "bps"));
 			}
-			io::printfn("  tx total: %s packets, %s, %s\n",
-				stats_format::format_human_count((double)total_tx_sent),
-				stats_format::format_human_rate(total_tx_pps, "pps"),
-				stats_format::format_human_rate(total_tx_bps, "bps"));
-		}
-
-		if (rx_ctxs.len > 0) {
+			io::printfn("  tx total: %d packets, %s, %s", sent, stats_format::format_human_rate(tx_pps, "pps"), stats_format::format_human_rate(tx_pps * (double)packet_len * 8.0, "bps"));
 			io::printn("rx workers:");
-			io::printfn("  %-4s%-8s%-8s%-14s%-14s%-12s%-12s%s", "id", "lcore", "queue", "received", "bytes", "pps", "bps", "imiss");
-			for (usz i = 0; i < rx_ctxs.len; i++) {
-				RxWorkerStatsView worker = make_rx_worker_stats_view(&rx_ctxs[i]);
-				double worker_pps = (double)rx_deltas[i] / sample_seconds;
-				double worker_bps = worker_pps * (double)packet_len * 8.0;
-				io::printfn("  %-4d%-8d%-8d%-14s%-14s%-12s%-12s%s",
-					worker.worker_id,
-					worker.lcore_id,
-					worker.queue_id,
-					stats_format::format_human_count((double)worker.rx_received),
-					stats_format::format_human_count((double)worker.rx_bytes),
-					stats_format::format_human_rate(worker_pps, "pps"),
-					stats_format::format_human_rate(worker_bps, "bps"),
-					stats_format::format_human_count((double)stats.imissed));
+			foreach (i, ctx : rx_ctxs) {
+				if (ctx.port_id != port) continue;
+				RxWorkerStatsView w = make_rx_worker_stats_view(&rx_ctxs[i]);
+				double pps = (double)counter_delta(w.rx_received, state.previous_rx_received[i]) / seconds;
+				double bps = (double)counter_delta(w.rx_bytes, state.previous_rx_bytes[i]) * 8.0 / seconds;
+				state.previous_rx_received[i] = w.rx_received;
+				state.previous_rx_bytes[i] = w.rx_bytes;
+				received += w.rx_received;
+				bytes += w.rx_bytes;
+				rx_pps += pps;
+				rx_bps += bps;
+				io::printfn("  id %d lcore %d queue %d received %d bytes %d %s %s", w.worker_id, w.lcore_id, w.queue_id, w.rx_received, w.rx_bytes,
+					stats_format::format_human_rate(pps, "pps"), stats_format::format_human_rate(bps, "bps"));
 			}
-			io::printfn("  rx total: %s packets, %s bytes, %s, %s, imiss: %s, errors: %s\n",
-				stats_format::format_human_count((double)total_rx_received),
-				stats_format::format_human_count((double)total_rx_bytes),
-				stats_format::format_human_rate(total_rx_pps, "pps"),
-				stats_format::format_human_rate(total_rx_bps, "bps"),
-				stats_format::format_human_count((double)imiss_delta),
-				stats_format::format_human_count((double)ierrors_delta));
+			EthStats stats = {};
+			ulong missed = 0;
+			ulong errors = 0;
+			if (dpdk::ff_eth_stats_get(port, &stats) == 0) {
+				missed = counter_delta(stats.imissed, state.previous_imissed[pi]);
+				errors = counter_delta(stats.ierrors, state.previous_ierrors[pi]);
+				state.previous_imissed[pi] = stats.imissed;
+				state.previous_ierrors[pi] = stats.ierrors;
+			}
+			io::printfn("  rx total: %d packets, %d bytes, %s, %s, imiss: %d, errors: %d", received, bytes,
+				stats_format::format_human_rate(rx_pps, "pps"), stats_format::format_human_rate(rx_bps, "bps"), missed, errors);
+			all_tx += sent;
+			all_rx += received;
+			all_bytes += bytes;
+			all_tx_pps += tx_pps;
+			all_rx_pps += rx_pps;
+			all_rx_bps += rx_bps;
 		}
+		io::printfn("\noverall tx total: %d packets, %s, %s", all_tx, stats_format::format_human_rate(all_tx_pps, "pps"), stats_format::format_human_rate(all_tx_pps * (double)packet_len * 8.0, "bps"));
+		io::printfn("overall rx total: %d packets, %d bytes, %s, %s", all_rx, all_bytes, stats_format::format_human_rate(all_rx_pps, "pps"), stats_format::format_human_rate(all_rx_bps, "bps"));
 	};
 }
 
-fn bool wait_for_all(uint[] lcores, WorkerContext[] tx_ctxs, RxWorkerContext[] rx_ctxs, ushort port_id, usz packet_len, ushort batch_size, RunOptions options, List{String}* errors) @private {
+fn bool wait_for_all(uint[] lcores, WorkerContext[] tx_ctxs, RxWorkerContext[] rx_ctxs, ushort[] ports, usz packet_len, ushort batch_size, RunOptions options, List{String}* errors) @private {
 	usz total = lcores.len;
 	bool ok = true;
 
@@ -957,7 +939,7 @@ fn bool wait_for_all(uint[] lcores, WorkerContext[] tx_ctxs, RxWorkerContext[] r
 	while (joined_count < total) {
 		long now = time(null);
 		if (now >= state.next) {
-			print_live_stats(tx_ctxs, rx_ctxs, port_id, packet_len, batch_size, options, &state, now);
+			print_live_stats(tx_ctxs, rx_ctxs, ports, packet_len, batch_size, options, &state, now);
 			while (state.next <= now) state.next += (long)interval;
 		}
 
@@ -980,7 +962,7 @@ fn bool wait_for_all(uint[] lcores, WorkerContext[] tx_ctxs, RxWorkerContext[] r
 
 // --- traffic orchestration ------------------------------------------------
 
-fn bool run_traffic(ushort port_id, Mempool* mbuf_pool, GeneratedPacket* packet, ushort batch_size, ulong tx_threads, ulong rx_threads, RunOptions options, List{String}* errors, Result* result, List{WorkerResult}* workers, List{WorkerResult}* rx_workers) @private {
+fn bool run_traffic(ushort[] ports, Mempool* mbuf_pool, GeneratedPacket* packet, ushort batch_size, ulong tx_threads, ulong rx_threads, RunOptions options, List{String}* errors, Result* result, List{WorkerResult}* workers, List{WorkerResult}* rx_workers) @private {
 	uint[RUNTIME_MAX_LCORES] lcore_buf;
 	uint nworkers = dpdk::ff_worker_lcores(&lcore_buf[0], (uint)RUNTIME_MAX_LCORES);
 	ulong total_threads = tx_threads + rx_threads;
@@ -993,7 +975,7 @@ fn bool run_traffic(ushort port_id, Mempool* mbuf_pool, GeneratedPacket* packet,
 		defer context.errors.free();
 		context.worker_id = 0;
 		context.lcore_id = dpdk::ff_lcore_id();
-		context.port_id = port_id;
+		context.port_id = ports[0];
 		context.queue_id = 0;
 		context.first_flow = 0;
 		context.flow_count = packet.flow_plan.planned_packets;
@@ -1014,6 +996,17 @@ fn bool run_traffic(ushort port_id, Mempool* mbuf_pool, GeneratedPacket* packet,
 		return rc == 0;
 	}
 
+	if (nworkers == 0 && tx_threads == 0 && rx_threads == 1 && ports.len == 1) {
+		RxWorkerContext context = {};
+		context.port_id = ports[0];
+		context.lcore_id = dpdk::ff_lcore_id();
+		context.batch_size = RUNTIME_RX_BATCH_SIZE;
+		run_rx_worker_impl(&context);
+		result.rx_received += context.rx_received;
+		result.rx_bytes += context.rx_bytes;
+		rx_workers.push(make_rx_worker_result(&context));
+		return true;
+	}
 	if (nworkers < total_threads) {
 		errors.push(string::tformat("PMD_THREADS(%d) + RX_THREADS(%d) requires %d worker lcore(s), but DPDK_ARGS enabled %d; use DPDK_ARGS like \"-l 0-%d\"",
 			tx_threads, rx_threads, total_threads, nworkers, total_threads));
@@ -1035,9 +1028,10 @@ fn bool run_traffic(ushort port_id, Mempool* mbuf_pool, GeneratedPacket* packet,
 		context.errors.init(mem);
 		context.worker_id = worker;
 		context.lcore_id = lcore_buf[worker];
-		context.port_id = port_id;
-		context.queue_id = (ushort)worker;
-		FlowRange range = assigned_flow_range(packet.flow_plan.planned_packets, tx_threads, worker, options.split);
+		WorkerAssignment assignment = assign_port_worker(ports, tx_threads, worker);
+		context.port_id = assignment.port_id;
+		context.queue_id = assignment.queue_id;
+		FlowRange range = assigned_flow_range(packet.flow_plan.planned_packets, tx_threads / (ulong)ports.len, context.queue_id, options.split);
 		context.first_flow = range.first;
 		context.flow_count = range.count;
 		context.clone_count = options.clone_count;
@@ -1052,6 +1046,7 @@ fn bool run_traffic(ushort port_id, Mempool* mbuf_pool, GeneratedPacket* packet,
 		LcoreFunction worker_fn = options.once ? &run_worker_once : &run_worker;
 		int rc = dpdk::rte_eal_remote_launch(worker_fn, context, lcore_buf[worker]);
 		if (rc < 0) {
+			context.errors.free();
 			errors.push(string::tformat("rte_eal_remote_launch failed for TX lcore %d: %s", lcore_buf[worker], dpdk::strerror(-rc)));
 			ok = false;
 			break;
@@ -1066,8 +1061,9 @@ fn bool run_traffic(ushort port_id, Mempool* mbuf_pool, GeneratedPacket* packet,
 			*context = {};
 			context.worker_id = worker;
 			context.lcore_id = lcore_buf[tx_threads + worker];
-			context.port_id = port_id;
-			context.queue_id = (ushort)worker;
+			WorkerAssignment assignment = assign_port_worker(ports, rx_threads, worker);
+			context.port_id = assignment.port_id;
+			context.queue_id = assignment.queue_id;
 			context.batch_size = RUNTIME_RX_BATCH_SIZE;
 			context.published_stats = &rx_published_stats[worker];
 			publish_rx_worker_stats(context);
@@ -1085,7 +1081,7 @@ fn bool run_traffic(ushort port_id, Mempool* mbuf_pool, GeneratedPacket* packet,
 
 	if (!ok) runtime_stop_requested = true;
 
-	ok = wait_for_all(used_lcores[:tx_launched + rx_launched], tx_ctxs[:tx_launched], rx_ctxs[:rx_launched], port_id, packet.base_payload.len, batch_size, options, errors) && ok;
+	ok = wait_for_all(used_lcores[:tx_launched + rx_launched], tx_ctxs[:tx_launched], rx_ctxs[:rx_launched], ports, packet.base_payload.len, batch_size, options, errors) && ok;
 
 	for (usz i = 0; i < tx_launched; i++) {
 		result.tx_attempted += tx_ctxs[i].tx_attempted;
@@ -1100,48 +1096,6 @@ fn bool run_traffic(ushort port_id, Mempool* mbuf_pool, GeneratedPacket* packet,
 		rx_workers.push(make_rx_worker_result(&rx_ctxs[i]));
 	}
 	return ok;
-}
-
-fn void capture_rx_workers(ulong rx_threads, List{String}* errors, Result* result, List{WorkerResult}* rx_workers) @private {
-	uint[RUNTIME_MAX_LCORES] lcores;
-	uint nworkers = dpdk::ff_worker_lcores(&lcores[0], (uint)RUNTIME_MAX_LCORES);
-	if (nworkers < rx_threads) {
-		errors.push(string::tformat("RX_THREADS(%d) requires %d worker lcore(s), but DPDK_ARGS enabled %d; use DPDK_ARGS like \"-l 0-%d\"",
-			rx_threads, rx_threads, nworkers, rx_threads));
-		return;
-	}
-
-	RxWorkerContext[RUNTIME_MAX_LCORES] ctxs;
-	usz launched = 0;
-	bool ok = true;
-
-	for (ulong worker = 0; worker < rx_threads; worker++) {
-		RxWorkerContext* context = &ctxs[worker];
-		*context = {};
-		context.worker_id = worker;
-		context.lcore_id = lcores[worker];
-		context.port_id = RUNTIME_PORT_ID;
-		context.queue_id = (ushort)worker;
-		context.batch_size = RUNTIME_RX_BATCH_SIZE;
-
-		int rc = dpdk::rte_eal_remote_launch(&run_rx_worker, context, lcores[worker]);
-		if (rc < 0) {
-			errors.push(string::tformat("rte_eal_remote_launch failed for RX lcore %d: %s", lcores[worker], dpdk::strerror(-rc)));
-			ok = false;
-			break;
-		}
-		launched++;
-	}
-
-	if (!ok) runtime_stop_requested = true;
-	for (usz worker = 0; worker < launched; worker++) {
-		(void)dpdk::rte_eal_wait_lcore(lcores[worker]);
-	}
-	for (usz worker = 0; worker < launched; worker++) {
-		result.rx_received += ctxs[worker].rx_received;
-		result.rx_bytes += ctxs[worker].rx_bytes;
-		rx_workers.push(make_rx_worker_result(&ctxs[worker]));
-	}
 }
 
 // --- public entry points --------------------------------------------------
@@ -1224,73 +1178,108 @@ fn Result Runtime.run(&self, Program program, String eal_program_name, RunOption
 		return result;
 	}
 
-	if (!check_tap_permission(&result.errors)) {
-		result.ok = false;
-		return result;
-	}
-
 	if (init_eal(config.dpdk_args, eal_program_name, &result, &result.errors) < 0) {
 		result.ok = false;
 		return result;
 	}
 
+	ushort[] ports = discover_ports(&result.errors);
+	defer cleanup_eal(&result.warnings);
+	if (ports.len == 0) return result;
+	result.pmd_threads = config.pmd_threads.has_value ? config.pmd_threads.value : ports.len;
+	if (!validate_port_workers(ports.len, result.pmd_threads, result.rx_threads, &result.errors) ||
+		!validate_worker_lcores(result.pmd_threads, result.rx_threads, &result.errors)) return result;
+	result.planned_transmissions = checked_total_transmission_count(result.planned_packets,
+		result.pmd_threads, options, &result, ports.len);
+	if (result.errors.len()) return result;
 	ulong tx_threads = result.pmd_threads;
 	ulong rx_threads = result.rx_threads;
-	ushort tx_queue_count = (ushort)tx_threads;
-	ushort rx_queue_count = rx_threads > 0 ? (ushort)rx_threads : tx_queue_count;
+	ushort tx_queue_count = (ushort)(tx_threads / (ulong)ports.len);
+	ushort rx_queue_count = rx_threads > 0 ? (ushort)(rx_threads / (ulong)ports.len) : tx_queue_count;
 	ushort batch_size = (ushort)config.tx_batch_size;
 
 	install_signal_handlers();
 
-	bool port_started = false;
+	usz started = 0;
 	Mempool* tx_pool = make_tx_mbuf_pool(&generated.packet, tx_threads, batch_size, options.mempool_seed_dump_file, &result.errors);
-	Mempool* rx_pool = make_rx_mbuf_pool(rx_queue_count, &result.errors);
+	Mempool* rx_pool = make_rx_mbuf_pool((ushort)(rx_queue_count * ports.len), &result.errors);
 	uint tx_offload_features = requested_tx_offload_features(generated.packet.fixup_plan.offload);
-	if (tx_pool != null && rx_pool != null && probe_tap_port(&result.errors) &&
-		configure_and_start_port(RUNTIME_PORT_ID, rx_queue_count, tx_queue_count, rx_pool, tx_offload_features, &result.errors, &result)) {
-		port_started = true;
-		run_traffic(RUNTIME_PORT_ID, tx_pool, &generated.packet, batch_size, tx_threads, rx_threads, options, &result.errors, &result, &workers, &rx_workers);
-	}
-
-	if (port_started) {
-		EthStats stats;
-		if (dpdk::ff_eth_stats_get(RUNTIME_PORT_ID, &stats) == 0) {
-			result.rx_missed = stats.imissed;
-			result.rx_errors = stats.ierrors;
+	if (tx_pool != null && rx_pool != null) {
+		foreach (port : ports) {
+			if (!configure_and_start_port(port, rx_queue_count, tx_queue_count, rx_pool, tx_offload_features, &result.errors, &result)) break;
+			started++;
 		}
-		stop_and_close_port(RUNTIME_PORT_ID, &result.warnings);
-		if (options.mempool_seed_dump_file.has_value && tx_pool != null) {
-			Maybe{String} post_dump_file;
-			post_dump_file.set(string::tformat("%s.post", options.mempool_seed_dump_file.value));
-			(void)inspect_mbuf_pool(tx_pool, generated.packet.base_payload,
-				mbuf_count_for(tx_threads, batch_size), post_dump_file, false, &result.errors);
+		if (started == ports.len) {
+			run_traffic(ports, tx_pool, &generated.packet, batch_size, tx_threads, rx_threads, options, &result.errors, &result, &workers, &rx_workers);
 		}
 	}
-
+	collect_port_results(ports[:started], &result, workers.to_tarray(), rx_workers.to_tarray(), ports.len);
+	foreach (port : ports[:started]) stop_and_close_port(port, &result.warnings);
+	if (options.mempool_seed_dump_file.has_value && tx_pool != null) {
+		Maybe{String} post_dump_file;
+		post_dump_file.set(string::tformat("%s.post", options.mempool_seed_dump_file.value));
+		(void)inspect_mbuf_pool(tx_pool, generated.packet.base_payload,
+			mbuf_count_for(tx_threads, batch_size), post_dump_file, false, &result.errors);
+	}
 	if (rx_pool != null) dpdk::rte_mempool_free(rx_pool);
 	if (tx_pool != null) dpdk::rte_mempool_free(tx_pool);
-	cleanup_eal(&result.warnings);
 
 	result.workers = workers.to_tarray();
 	result.rx_workers = rx_workers.to_tarray();
-	finish_live_port_run(&result, port_started);
+	finish_live_port_run(&result, started == ports.len);
 	return result;
 }
 
 fn void run_capture(Config config, String eal_program_name, RunOptions options, Result* result, List{WorkerResult}* rx_workers) @private {
-	result.pmd_threads = config.pmd_threads.has_value ? config.pmd_threads.value : 1;
+	result.pmd_threads = 0;
 	result.rx_threads = config.rx_threads.has_value ? config.rx_threads.value : 0;
 	result.tx_batch_size = config.tx_batch_size;
 
-	if (!check_tap_permission(&result.errors)) {
-		result.ok = false;
-		return;
-	}
 	if (init_eal(config.dpdk_args, eal_program_name, result, &result.errors) < 0) {
 		result.ok = false;
 		return;
 	}
 
+	ushort[] ports = discover_ports(&result.errors);
+	if (ports.len == 0) {
+		cleanup_eal(&result.warnings);
+		return;
+	}
+	if (options.capture_file.has_value && ports.len != 1) {
+		result.errors.push("PCAP capture supports only one DPDK port");
+		cleanup_eal(&result.warnings);
+		return;
+	}
+	result.rx_threads = config.rx_threads.has_value ? config.rx_threads.value : ports.len;
+	if (!validate_port_workers(ports.len, 0, result.rx_threads, &result.errors) ||
+		(!options.capture_file.has_value && !validate_worker_lcores(0, result.rx_threads, &result.errors))) {
+		cleanup_eal(&result.warnings);
+		return;
+	}
+	if (!options.capture_file.has_value) {
+		install_signal_handlers();
+		ushort queues = (ushort)(result.rx_threads / (ulong)ports.len);
+		Mempool* rx_pool = make_rx_mbuf_pool((ushort)result.rx_threads, &result.errors);
+		usz started = 0;
+		if (rx_pool != null) {
+			foreach (port : ports) {
+				if (!configure_and_start_port(port, queues, 1, rx_pool, 0, &result.errors, result)) break;
+				started++;
+			}
+			if (started == ports.len) {
+				GeneratedPacket empty_packet = {};
+				List{WorkerResult} tx;
+				tx.tinit();
+				run_traffic(ports, null, &empty_packet, RUNTIME_RX_BATCH_SIZE, 0, result.rx_threads, options, &result.errors, result, &tx, rx_workers);
+			}
+		}
+		collect_port_results(ports[:started], result, {}, rx_workers.to_tarray(), ports.len);
+		foreach (port : ports[:started]) stop_and_close_port(port, &result.warnings);
+		if (rx_pool != null) dpdk::rte_mempool_free(rx_pool);
+		cleanup_eal(&result.warnings);
+		finish_live_port_run(result, started == ports.len);
+		return;
+	}
 	ulong rx_threads = result.rx_threads;
 	install_signal_handlers();
 
@@ -1338,14 +1327,13 @@ fn void run_capture(Config config, String eal_program_name, RunOptions options, 
 	ushort rx_queue_count = rx_threads > 0 ? (ushort)rx_threads : 1;
 	bool port_started = false;
 
-	if (probe_tap_port(&result.errors) &&
-		configure_and_start_port(RUNTIME_PORT_ID, rx_queue_count, tx_queue_count, pool, 0, &result.errors, result)) {
+	if (configure_and_start_port(ports[0], rx_queue_count, tx_queue_count, pool, 0, &result.errors, result)) {
 		port_started = true;
 
 		if (have_file) {
 			Mbuf*[RUNTIME_MAX_RX_BATCH_SIZE] mbufs;
 			while (!runtime_stop_requested) {
-				ushort nb_rx = dpdk::ff_eth_rx_burst(RUNTIME_PORT_ID, 0, &mbufs[0], RUNTIME_RX_BATCH_SIZE);
+				ushort nb_rx = dpdk::ff_eth_rx_burst(ports[0], 0, &mbufs[0], RUNTIME_RX_BATCH_SIZE);
 				if (nb_rx == 0) continue;
 
 				ulong bytes = 0;
@@ -1367,35 +1355,65 @@ fn void run_capture(Config config, String eal_program_name, RunOptions options, 
 				dpdk::ff_pktmbuf_free_bulk(&mbufs[0], nb_rx);
 				if (write_error) break;
 			}
-		} else if (rx_threads == 0) {
-			RxWorkerContext context;
-			context = {};
-			context.worker_id = 0;
-			context.lcore_id = dpdk::ff_lcore_id();
-			context.port_id = RUNTIME_PORT_ID;
-			context.queue_id = 0;
-			context.batch_size = RUNTIME_RX_BATCH_SIZE;
-			// Main thread already owns a temp allocator; call the impl directly.
-			run_rx_worker_impl(&context);
-			result.rx_received += context.rx_received;
-			result.rx_bytes += context.rx_bytes;
-			rx_workers.push(make_rx_worker_result(&context));
-		} else {
-			capture_rx_workers(rx_threads, &result.errors, result, rx_workers);
 		}
 	}
 
 	if (port_started) {
 		EthStats stats;
-		if (dpdk::ff_eth_stats_get(RUNTIME_PORT_ID, &stats) == 0) {
+		if (dpdk::ff_eth_stats_get(ports[0], &stats) == 0) {
 			result.rx_missed = stats.imissed;
 			result.rx_errors = stats.ierrors;
 		}
-		stop_and_close_port(RUNTIME_PORT_ID, &result.warnings);
+		stop_and_close_port(ports[0], &result.warnings);
 	}
 
+	result.ports = mem::temp_array(PortResult, 1);
+	result.ports[0] = { .port_id = ports[0], .rx_received = result.rx_received, .rx_bytes = result.rx_bytes, .rx_missed = result.rx_missed, .rx_errors = result.rx_errors };
 	if (have_file) (void)out.close();
 	dpdk::rte_mempool_free(pool);
 	cleanup_eal(&result.warnings);
 	finish_live_port_run(result, port_started);
+}
+
+fn ushort[] discover_ports(List{String}* errors) @private {
+	ushort[RUNTIME_MAX_LCORES] ids;
+	uint count = dpdk::ff_eth_port_ids(&ids[0], (uint)RUNTIME_MAX_LCORES);
+	if (count == 0) {
+		if (!check_tap_permission(errors) || !probe_tap_port(errors)) return {};
+		count = dpdk::ff_eth_port_ids(&ids[0], (uint)RUNTIME_MAX_LCORES);
+	}
+	if (count == 0 || count > RUNTIME_MAX_LCORES) {
+		errors.push("available port count must be between 1 and 128");
+		return {};
+	}
+	ushort[] ports = mem::temp_array(ushort, (sz)count);
+	ports[..] = ids[:count];
+	return ports;
+}
+
+fn void collect_port_results(ushort[] ports, Result* result, WorkerResult[] tx, WorkerResult[] rx, usz total_ports) @private {
+	result.ports = mem::temp_array(PortResult, (sz)ports.len);
+	foreach (i, port : ports) {
+		PortResult* p = &result.ports[i];
+		*p = summarize_port_workers(port, tx, rx);
+		p.planned_transmissions = result.planned_transmissions / total_ports;
+		EthStats stats = {};
+		if (dpdk::ff_eth_stats_get(port, &stats) == 0) {
+			p.rx_missed = stats.imissed;
+			p.rx_errors = stats.ierrors;
+			result.rx_missed += stats.imissed;
+			result.rx_errors += stats.ierrors;
+		}
+	}
+}
+
+fn bool validate_worker_lcores(ulong tx, ulong rx, List{String}* errors) @private {
+	uint[RUNTIME_MAX_LCORES] ids;
+	uint count = dpdk::ff_worker_lcores(&ids[0], (uint)RUNTIME_MAX_LCORES);
+	if (count == 0 && tx + rx == 1) return true;
+	if (count < tx + rx) {
+		errors.push(string::tformat("PMD_THREADS(%d) + RX_THREADS(%d) requires %d worker lcore(s), but DPDK_ARGS enabled %d", tx, rx, tx + rx, count));
+		return false;
+	}
+	return true;
 }

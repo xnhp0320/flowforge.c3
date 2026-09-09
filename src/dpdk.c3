@@ -221,3 +221,5 @@ fn String strerror(int errnum) {
 	ZString message = rte_strerror(errnum);
 	return message.str_view().copy(tmem);
 }
+
+extern fn uint ff_eth_port_ids(ushort* ids, uint capacity);

@@ -87,6 +87,8 @@ unsigned ff_worker_lcores(uint32_t *out, unsigned max);
 struct rte_mbuf *ff_test_alloc_mbuf(void);
 void ff_test_free_mbuf(struct rte_mbuf *mbuf);
 
+unsigned int ff_eth_port_ids(uint16_t *ids, unsigned int capacity);
+
 /* TAP preflight: open /dev/net/tun and TUNSETIFF on `iface`. Returns 0 on
  * success, otherwise writes a message into `err` and returns -1. */
 int ff_check_tap_permission(const char *iface, char *err, size_t err_len);

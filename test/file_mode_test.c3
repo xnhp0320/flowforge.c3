@@ -56,6 +56,34 @@ fn void test_generator_produces_per_flow_payloads() @test {
 	assert(payload[15] == 3);
 }
 
+fn void test_generator_completes_each_modifier_round_and_produces_cartesian_product() @test {
+	Registry reg = registry::create_default_registry();
+	PacketGenerator gen = { .registry = &reg };
+
+	PacketGenerationResult result = gen.prepare(
+		testutil::must_parse(`IP(src="[10.0.0.1-10.0.0.3]",dst="10.0.1.1")/UDP(sport="[10000-10001]",dport=53)`));
+	assert(result.ok);
+	assert(result.has_packet);
+	assert(result.packet.modifiers.len() == 2);
+	assert(result.packet.modifiers[0].value_count == 3);
+	assert(result.packet.modifiers[1].value_count == 2);
+	assert(result.packet.flow_plan.total_flows == 3 * 2);
+	assert(result.packet.flow_plan.planned_packets == 3 * 2);
+
+	char[6] expected_src_last_octet = { 1, 2, 3, 1, 2, 3 };
+	ushort[6] expected_sport = { 10000, 10000, 10000, 10001, 10001, 10001 };
+	List{String} errors;
+	errors.tinit();
+
+	for (ulong flow_index = 0; flow_index < result.packet.flow_plan.planned_packets; flow_index++) {
+		char[] payload = result.packet.payload_for_flow(flow_index, tmem, &errors)!!;
+		assert(errors.len() == 0);
+		assert(payload[15] == expected_src_last_octet[flow_index]);
+		ushort sport = ((ushort)payload[20] << 8) | (ushort)payload[21];
+		assert(sport == expected_sport[flow_index]);
+	}
+}
+
 fn void test_generator_applies_flow_into_prefilled_buffer_repeatedly() @test {
 	Registry reg = registry::create_default_registry();
 	PacketGenerator gen = { .registry = &reg };

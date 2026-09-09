@@ -278,6 +278,10 @@ fn bool plan_flow_indexes(List{PayloadFieldModifier} modifiers, MaybeCount packe
 
 fn bool apply_flow_index(char[] payload, List{PayloadFieldModifier} modifiers, PacketFixupPlan fixup_plan, ulong flow_index, List{String}* errors, uint* ipv4_pseudo_delta) {
 	ulong remaining = flow_index;
+	// Treat modifier values as mixed-radix digits. The first modifier is the
+	// least-significant digit, so it completes a full round before the next
+	// modifier advances. plan_flow_indexes() uses the product of these same
+	// radices, making every combination appear exactly once in a full plan.
 	foreach (&m : modifiers) {
 		ulong value_index = remaining % m.value_count;
 		remaining /= m.value_count;

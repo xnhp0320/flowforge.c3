@@ -18,6 +18,7 @@ const ulong ULONG_MAX = 0xFFFFFFFFFFFFFFFF;
 const ushort USHORT_MAX = 0xFFFF;
 
 struct WorkerResult {
+	ushort port_id;
 	ulong worker_id;
 	ulong lcore_id;
 	ushort queue_id;
@@ -44,7 +45,7 @@ struct Result {
 	List{String} warnings;
 	List{String} errors;
 	int eal_parsed_args;
-	ushort port_id;
+	PortResult[] ports;
 	usz packet_len;
 	ulong total_flows;
 	ulong planned_packets;
@@ -286,15 +287,16 @@ fn ulong checked_transmission_count(ulong flow_count, ulong clone_count, Result*
 	return flow_count * clone_count;
 }
 
-fn ulong checked_total_transmission_count(ulong planned_flows, ulong worker_count, RunOptions options, Result* result) {
+fn ulong checked_total_transmission_count(ulong planned_flows, ulong worker_count, RunOptions options, Result* result, ulong port_count = 1) {
 	ulong per_worker = checked_transmission_count(planned_flows, options.clone_count, result);
 	if (result.errors.len()) return 0;
-	if (options.split) return per_worker;
-	if (per_worker > ULONG_MAX / worker_count) {
+	ulong multiplier = options.split ? port_count : worker_count;
+	if (multiplier == 0) return 0;
+	if (per_worker > ULONG_MAX / multiplier) {
 		result.errors.push("worker expansion has more than 18446744073709551615 packets");
 		return 0;
 	}
-	return per_worker * worker_count;
+	return per_worker * multiplier;
 }
 
 fn void append_strings(List{String}* dest, List{String} src) {
@@ -339,5 +341,60 @@ fn Result Runtime.check(&self, Program program, RunOptions options = default_run
 		result.planned_packets, result.pmd_threads, options, &result);
 	if (result.errors.len()) return result;
 	result.ok = true;
+	return result;
+}
+
+struct PortResult {
+	ushort port_id;
+	ulong tx_attempted;
+	ulong tx_sent;
+	ulong rx_received;
+	ulong rx_bytes;
+	ulong rx_missed;
+	ulong rx_errors;
+	ulong planned_transmissions;
+}
+
+// Counts are totals across all ports; a disabled direction has no queues assigned.
+fn bool validate_port_workers(usz port_count, ulong tx, ulong rx, List{String}* errors) {
+	if (port_count == 0) {
+		errors.push("no DPDK ports available");
+		return false;
+	}
+	if ((tx > 0 && tx % port_count != 0) || (rx > 0 && rx % port_count != 0)) {
+		errors.push(string::tformat("PMD_THREADS(%d) and RX_THREADS(%d) must each be divisible by %d ports when enabled", tx, rx, port_count));
+		return false;
+	}
+	if (tx + rx > 128) {
+		errors.push("total TX and RX workers exceeds runtime limit 128");
+		return false;
+	}
+	return true;
+}
+
+struct WorkerAssignment {
+	ushort port_id;
+	ushort queue_id;
+	ulong group_size;
+}
+
+fn WorkerAssignment assign_port_worker(ushort[] ports, ulong total, ulong worker) {
+	assert(ports.len > 0 && total > 0 && total % (ulong)ports.len == 0 && worker < total);
+	ulong group_size = total / (ulong)ports.len;
+	return { .port_id = ports[worker / group_size], .queue_id = (ushort)(worker % group_size), .group_size = group_size };
+}
+
+fn PortResult summarize_port_workers(ushort port, WorkerResult[] tx, WorkerResult[] rx) {
+	PortResult result = { .port_id = port };
+	foreach (w : tx) {
+		if (w.port_id != port) continue;
+		result.tx_sent += w.tx_sent;
+		result.tx_attempted += w.tx_attempted;
+	}
+	foreach (w : rx) {
+		if (w.port_id != port) continue;
+		result.rx_received += w.rx_received;
+		result.rx_bytes += w.rx_bytes;
+	}
 	return result;
 }

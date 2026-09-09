@@ -388,27 +388,21 @@ fn int run_live_mode(String content, String program_name, RunOptions options, bo
 	if (!result.ok) return 1;
 
 	if (options.capture) {
-		io::printfn("Capture completed; rte_eal_init parsed %d argument(s), port %d received %d packet(s), %d byte(s), missed %d, errors %d",
-			result.eal_parsed_args, result.port_id, result.rx_received, result.rx_bytes, result.rx_missed, result.rx_errors);
+		print_port_results(result);
+		io::printfn("Capture completed; rte_eal_init parsed %d argument(s), %d port(s) received %d packet(s), %d byte(s), missed %d, errors %d",
+			result.eal_parsed_args, result.ports.len, result.rx_received, result.rx_bytes, result.rx_missed, result.rx_errors);
 		if (options.capture_file.has_value) {
 			io::printfn("Capture written to '%s' with %d packet(s)", options.capture_file.value, result.rx_received);
 		}
 		return 0;
 	}
 
-	io::printfn("DPDK runtime completed; rte_eal_init parsed %d argument(s), port %d sent %d/%d packet(s), planned %d of %d flow(s), packet_len %d bytes, pmd_threads %d, rx_threads %d, tx_batch_size %d, clone_count %d, split %s, once %s, planned_transmissions_per_cycle %d",
-		result.eal_parsed_args, result.port_id, result.tx_sent, result.tx_attempted,
+	io::printfn("DPDK runtime completed; rte_eal_init parsed %d argument(s), %d port(s) sent %d/%d packet(s), planned %d of %d flow(s), packet_len %d bytes, pmd_threads %d, rx_threads %d, tx_batch_size %d, clone_count %d, split %s, once %s, planned_transmissions_per_cycle %d",
+		result.eal_parsed_args, result.ports.len, result.tx_sent, result.tx_attempted,
 		result.planned_packets, result.total_flows, result.packet_len,
 		result.pmd_threads, result.rx_threads, result.tx_batch_size, result.clone_count,
 		result.split ? "on" : "off", result.once ? "on" : "off", result.planned_transmissions);
-	foreach (worker : result.workers) {
-		io::printfn("PMD worker %d lcore %d queue %d flows %d+%d sent %d/%d packet(s)",
-			worker.worker_id, worker.lcore_id, worker.queue_id, worker.first_flow, worker.flow_count, worker.tx_sent, worker.tx_attempted);
-	}
-	foreach (rx : result.rx_workers) {
-		io::printfn("RX worker %d lcore %d queue %d received %d bytes %d",
-			rx.worker_id, rx.lcore_id, rx.queue_id, rx.rx_received, rx.rx_bytes);
-	}
+	print_port_results(result);
 	if (result.rx_threads > 0) {
 		io::printfn("RX aggregate: received %d bytes %d missed %d errors %d",
 			result.rx_received, result.rx_bytes, result.rx_missed, result.rx_errors);
@@ -582,4 +576,21 @@ fn int main(String[] args) {
 		return run_program(content, parse_only, verbose, reg);
 	}
 	return run_check(content, parse_only, verbose, reg);
+}
+
+fn void print_port_results(runtime::Result result) {
+	foreach (port : result.ports) {
+		io::printfn("Port %d: TX %d/%d RX %d bytes %d missed %d errors %d planned_transmissions %d",
+			port.port_id, port.tx_sent, port.tx_attempted, port.rx_received, port.rx_bytes, port.rx_missed, port.rx_errors, port.planned_transmissions);
+		foreach (worker : result.workers) {
+			if (worker.port_id != port.port_id) continue;
+			io::printfn("PMD worker %d lcore %d queue %d flows %d+%d sent %d/%d packet(s)",
+				worker.worker_id, worker.lcore_id, worker.queue_id, worker.first_flow, worker.flow_count, worker.tx_sent, worker.tx_attempted);
+		}
+		foreach (rx : result.rx_workers) {
+			if (rx.port_id != port.port_id) continue;
+			io::printfn("RX worker %d lcore %d queue %d received %d bytes %d",
+				rx.worker_id, rx.lcore_id, rx.queue_id, rx.rx_received, rx.rx_bytes);
+		}
+	}
 }

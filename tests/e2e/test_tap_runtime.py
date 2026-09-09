@@ -171,7 +171,7 @@ def test_multi_pmd_workers_emit_duplicate_cartesian_ranges(packet_program, captu
         f'{ETHER}/IP(src="[10.0.0.1-10.0.0.2]",dst="10.0.1.1")/'
         'TCP(sport="[10000-10001]",dport=443,flags=2)',
         packet_count=4,
-        dpdk_args="--no-huge --no-pci -l 0-2",
+        dpdk_args="--no-huge --no-pci -m 256 -l 0-2",
         pmd_threads=2,
         tx_batch_size=4,
     )
@@ -214,7 +214,7 @@ def test_split_pmd_workers_partition_cartesian_ranges(packet_program, capture_pa
         f'{ETHER}/IP(src="[10.0.0.1-10.0.0.3]",dst="10.0.1.1")/'
         'TCP(sport="[10000-10001]",dport=443,flags=2)',
         packet_count=5,
-        dpdk_args="--no-huge --no-pci -l 0-2",
+        dpdk_args="--no-huge --no-pci -m 256 -l 0-2",
         pmd_threads=2,
         tx_batch_size=4,
     )

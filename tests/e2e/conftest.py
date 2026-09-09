@@ -16,7 +16,7 @@ from scapy.layers.inet6 import ICMPv6ND_NS, ICMPv6ND_NA, ICMPv6ND_RS, ICMPv6ND_R
 
 
 TAP_IFACE = "packet_tap0"
-DEFAULT_DPDK_ARGS = "--no-huge --no-pci -l 0-1"
+DEFAULT_DPDK_ARGS = "--no-huge --no-pci -m 256 -l 0-1"
 ETH_P_ALL = 0x0003
 RUNTIME_SRC_MAC = "02:64:74:61:70:00"
 

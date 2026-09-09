@@ -106,6 +106,10 @@ int ff_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 		return rc;
 	}
 
+	if (nb_rx_q > dev_info.max_rx_queues || nb_tx_q > dev_info.max_tx_queues) {
+		return -EINVAL;
+	}
+
 	uint64_t tx_offloads = ff_dpdk_tx_offloads(tx_offload_features);
 	if ((tx_offloads & ~dev_info.tx_offload_capa) != 0) {
 		return -ENOTSUP;
@@ -238,4 +242,14 @@ int ff_check_tap_permission(const char *iface, char *err, size_t err_len) {
 	(void)err_len;
 	return 0;
 #endif
+}
+
+unsigned int ff_eth_port_ids(uint16_t *ids, unsigned int capacity) {
+	uint16_t port;
+	unsigned int count = 0;
+	RTE_ETH_FOREACH_DEV(port) {
+		if (count < capacity) ids[count] = port;
+		count++;
+	}
+	return count;
 }
