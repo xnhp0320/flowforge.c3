@@ -397,8 +397,8 @@ fn int run_live_mode(String content, String program_name, RunOptions options, bo
 		return 0;
 	}
 
-	io::printfn("DPDK runtime completed; rte_eal_init parsed %d argument(s), %d port(s) sent %d/%d packet(s), planned %d of %d flow(s), packet_len %d bytes, pmd_threads %d, rx_threads %d, tx_batch_size %d, clone_count %d, split %s, once %s, planned_transmissions_per_cycle %d",
-		result.eal_parsed_args, result.ports.len, result.tx_sent, result.tx_attempted,
+	io::printfn("DPDK runtime completed; rte_eal_init parsed %d argument(s), %d port(s) sent %d/%d packet(s), tx_errors %d, planned %d of %d flow(s), packet_len %d bytes, pmd_threads %d, rx_threads %d, tx_batch_size %d, clone_count %d, split %s, once %s, planned_transmissions_per_cycle %d",
+		result.eal_parsed_args, result.ports.len, result.tx_sent, result.tx_attempted, result.tx_errors,
 		result.planned_packets, result.total_flows, result.packet_len,
 		result.pmd_threads, result.rx_threads, result.tx_batch_size, result.clone_count,
 		result.split ? "on" : "off", result.once ? "on" : "off", result.planned_transmissions);
@@ -580,12 +580,12 @@ fn int main(String[] args) {
 
 fn void print_port_results(runtime::Result result) {
 	foreach (port : result.ports) {
-		io::printfn("Port %d: TX %d/%d RX %d bytes %d missed %d errors %d planned_transmissions %d",
-			port.port_id, port.tx_sent, port.tx_attempted, port.rx_received, port.rx_bytes, port.rx_missed, port.rx_errors, port.planned_transmissions);
+		io::printfn("Port %d: TX %d/%d tx_errors %d RX %d bytes %d missed %d errors %d planned_transmissions %d",
+			port.port_id, port.tx_sent, port.tx_attempted, port.tx_errors, port.rx_received, port.rx_bytes, port.rx_missed, port.rx_errors, port.planned_transmissions);
 		foreach (worker : result.workers) {
 			if (worker.port_id != port.port_id) continue;
-			io::printfn("PMD worker %d lcore %d queue %d flows %d+%d sent %d/%d packet(s)",
-				worker.worker_id, worker.lcore_id, worker.queue_id, worker.first_flow, worker.flow_count, worker.tx_sent, worker.tx_attempted);
+			io::printfn("PMD worker %d lcore %d queue %d flows %d+%d sent %d/%d packet(s), tx_errors %d",
+				worker.worker_id, worker.lcore_id, worker.queue_id, worker.first_flow, worker.flow_count, worker.tx_sent, worker.tx_attempted, worker.tx_errors);
 		}
 		foreach (rx : result.rx_workers) {
 			if (rx.port_id != port.port_id) continue;

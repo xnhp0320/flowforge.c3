@@ -33,6 +33,7 @@ const uint RUNTIME_CAPTURE_MBUF_COUNT = 8191;
 const usz RUNTIME_MAX_LCORES = 128;
 const usz RUNTIME_CACHE_LINE_SIZE = 64;
 const usz RUNTIME_DRIVER_NAME_SIZE = 128;
+const ushort RUNTIME_TX_RETRIES = 8;
 
 // DPDK worker lcores run on threads that c3c never sees, so they have no
 // implicitly-created temp allocator. Each worker entry point installs its own
@@ -72,7 +73,8 @@ fn ZString zstr(String value) @private => value.zstr_tcopy();
 struct PublishedWorkerStats @align(64) {
 	Atomic{ulong} tx_attempted;
 	Atomic{ulong} tx_sent;
-	char[48] _pad;
+	Atomic{ulong} tx_errors;
+	char[40] _pad;
 }
 
 struct PublishedRxWorkerStats @align(64) {
@@ -99,6 +101,7 @@ struct WorkerContext {
 	ushort batch_size;
 	ulong tx_attempted;
 	ulong tx_sent;
+	ulong tx_errors;
 	PublishedWorkerStats* published_stats;
 	List{String} errors;
 }
@@ -123,6 +126,7 @@ struct WorkerStatsView {
 	ulong flow_count;
 	ulong tx_attempted;
 	ulong tx_sent;
+	ulong tx_errors;
 }
 
 struct RxWorkerStatsView {
@@ -594,6 +598,7 @@ fn void publish_worker_stats(WorkerContext* context) @private {
 	if (context.published_stats == null) return;
 	context.published_stats.tx_attempted.store(context.tx_attempted);
 	context.published_stats.tx_sent.store(context.tx_sent);
+	context.published_stats.tx_errors.store(context.tx_errors);
 }
 
 fn void publish_rx_worker_stats(RxWorkerContext* context) @private {
@@ -615,19 +620,21 @@ fn bool transmit_batch(WorkerContext* context, Mbuf** packets, ushort count) @pr
 	}
 
 	ushort sent_total = 0;
+	ushort retries_remaining = RUNTIME_TX_RETRIES;
 	while (sent_total < prepared) {
 		ushort sent = dpdk::ff_eth_tx_burst(context.port_id, context.queue_id, &packets[sent_total], (ushort)(prepared - sent_total));
-		if (sent == 0) break;
 		sent_total += sent;
+		if (sent_total == prepared) break;
+		if (@unlikely(retries_remaining == 0)) {
+			ushort unsent = prepared - sent_total;
+			free_unsent(packets, sent_total, prepared);
+			context.tx_errors += unsent;
+			break;
+		}
+		retries_remaining--;
 	}
 
 	context.tx_sent += sent_total;
-	if (sent_total != prepared) {
-		free_unsent(packets, sent_total, prepared);
-		context.errors.push(string::tformat("rte_eth_tx_burst sent %d of %d prepared packet(s)", sent_total, prepared));
-		return false;
-	}
-
 	return prepared == count;
 }
 
@@ -780,6 +787,7 @@ fn WorkerResult make_worker_result(WorkerContext* context) @private {
 		.flow_count = context.flow_count,
 		.tx_attempted = context.tx_attempted,
 		.tx_sent = context.tx_sent,
+		.tx_errors = context.tx_errors,
 	};
 }
 
@@ -804,10 +812,12 @@ fn WorkerStatsView make_worker_stats_view(WorkerContext* context) @private {
 		.flow_count = context.flow_count,
 		.tx_attempted = context.tx_attempted,
 		.tx_sent = context.tx_sent,
+		.tx_errors = context.tx_errors,
 	};
 	if (context.published_stats != null) {
 		view.tx_attempted = context.published_stats.tx_attempted.load();
 		view.tx_sent = context.published_stats.tx_sent.load();
+		view.tx_errors = context.published_stats.tx_errors.load();
 	}
 	return view;
 }
@@ -847,6 +857,7 @@ fn void print_live_stats(WorkerContext[] tx_ctxs, RxWorkerContext[] rx_ctxs, ush
 		io::printfn("tx_batch_size: %d    clone_count: %d", batch_size, options.clone_count);
 		io::printfn("split: %s      once: %s", options.split ? "on" : "off", options.once ? "on" : "off");
 		ulong all_tx = 0;
+		ulong all_tx_errors = 0;
 		ulong all_rx = 0;
 		ulong all_bytes = 0;
 		double all_tx_pps = 0;
@@ -854,6 +865,7 @@ fn void print_live_stats(WorkerContext[] tx_ctxs, RxWorkerContext[] rx_ctxs, ush
 		double all_rx_bps = 0;
 		foreach (pi, port : ports) {
 			ulong sent = 0;
+			ulong tx_errors = 0;
 			ulong received = 0;
 			ulong bytes = 0;
 			double tx_pps = 0;
@@ -867,12 +879,13 @@ fn void print_live_stats(WorkerContext[] tx_ctxs, RxWorkerContext[] rx_ctxs, ush
 				double pps = (double)counter_delta(w.tx_sent, state.previous_tx_sent[i]) / seconds;
 				state.previous_tx_sent[i] = w.tx_sent;
 				sent += w.tx_sent;
+				tx_errors += w.tx_errors;
 				tx_pps += pps;
-				io::printfn("  id %d lcore %d queue %d flows %d+%d sent %d attempted %d %s %s",
-					w.worker_id, w.lcore_id, w.queue_id, w.first_flow, w.flow_count, w.tx_sent, w.tx_attempted,
+				io::printfn("  id %d lcore %d queue %d flows %d+%d sent %d attempted %d tx_errors %d %s %s",
+					w.worker_id, w.lcore_id, w.queue_id, w.first_flow, w.flow_count, w.tx_sent, w.tx_attempted, w.tx_errors,
 					stats_format::format_human_rate(pps, "pps"), stats_format::format_human_rate(pps * (double)packet_len * 8.0, "bps"));
 			}
-			io::printfn("  tx total: %d packets, %s, %s", sent, stats_format::format_human_rate(tx_pps, "pps"), stats_format::format_human_rate(tx_pps * (double)packet_len * 8.0, "bps"));
+			io::printfn("  tx total: %d packets, tx_errors: %d, %s, %s", sent, tx_errors, stats_format::format_human_rate(tx_pps, "pps"), stats_format::format_human_rate(tx_pps * (double)packet_len * 8.0, "bps"));
 			io::printn("rx workers:");
 			foreach (i, ctx : rx_ctxs) {
 				if (ctx.port_id != port) continue;
@@ -900,13 +913,14 @@ fn void print_live_stats(WorkerContext[] tx_ctxs, RxWorkerContext[] rx_ctxs, ush
 			io::printfn("  rx total: %d packets, %d bytes, %s, %s, imiss: %d, errors: %d", received, bytes,
 				stats_format::format_human_rate(rx_pps, "pps"), stats_format::format_human_rate(rx_bps, "bps"), missed, errors);
 			all_tx += sent;
+			all_tx_errors += tx_errors;
 			all_rx += received;
 			all_bytes += bytes;
 			all_tx_pps += tx_pps;
 			all_rx_pps += rx_pps;
 			all_rx_bps += rx_bps;
 		}
-		io::printfn("\noverall tx total: %d packets, %s, %s", all_tx, stats_format::format_human_rate(all_tx_pps, "pps"), stats_format::format_human_rate(all_tx_pps * (double)packet_len * 8.0, "bps"));
+		io::printfn("\noverall tx total: %d packets, tx_errors: %d, %s, %s", all_tx, all_tx_errors, stats_format::format_human_rate(all_tx_pps, "pps"), stats_format::format_human_rate(all_tx_pps * (double)packet_len * 8.0, "bps"));
 		io::printfn("overall rx total: %d packets, %d bytes, %s, %s", all_rx, all_bytes, stats_format::format_human_rate(all_rx_pps, "pps"), stats_format::format_human_rate(all_rx_bps, "bps"));
 	};
 }
@@ -991,6 +1005,7 @@ fn bool run_traffic(ushort[] ports, Mempool* mbuf_pool, GeneratedPacket* packet,
 		int rc = options.once ? run_worker_once_impl(&context) : run_worker_impl(&context);
 		result.tx_attempted += context.tx_attempted;
 		result.tx_sent += context.tx_sent;
+		result.tx_errors += context.tx_errors;
 		workers.push(make_worker_result(&context));
 		foreach (e : context.errors) errors.push(e);
 		return rc == 0;
@@ -1086,6 +1101,7 @@ fn bool run_traffic(ushort[] ports, Mempool* mbuf_pool, GeneratedPacket* packet,
 	for (usz i = 0; i < tx_launched; i++) {
 		result.tx_attempted += tx_ctxs[i].tx_attempted;
 		result.tx_sent += tx_ctxs[i].tx_sent;
+		result.tx_errors += tx_ctxs[i].tx_errors;
 		workers.push(make_worker_result(&tx_ctxs[i]));
 		foreach (e : tx_ctxs[i].errors) errors.push(e);
 		tx_ctxs[i].errors.free();

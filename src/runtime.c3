@@ -26,6 +26,7 @@ struct WorkerResult {
 	ulong flow_count;
 	ulong tx_attempted;
 	ulong tx_sent;
+	ulong tx_errors;
 	ulong rx_received;
 	ulong rx_bytes;
 }
@@ -52,6 +53,7 @@ struct Result {
 	ulong planned_transmissions;
 	ulong tx_attempted;
 	ulong tx_sent;
+	ulong tx_errors;
 	ulong rx_received;
 	ulong rx_bytes;
 	ulong rx_missed;
@@ -348,6 +350,7 @@ struct PortResult {
 	ushort port_id;
 	ulong tx_attempted;
 	ulong tx_sent;
+	ulong tx_errors;
 	ulong rx_received;
 	ulong rx_bytes;
 	ulong rx_missed;
@@ -390,6 +393,7 @@ fn PortResult summarize_port_workers(ushort port, WorkerResult[] tx, WorkerResul
 		if (w.port_id != port) continue;
 		result.tx_sent += w.tx_sent;
 		result.tx_attempted += w.tx_attempted;
+		result.tx_errors += w.tx_errors;
 	}
 	foreach (w : rx) {
 		if (w.port_id != port) continue;

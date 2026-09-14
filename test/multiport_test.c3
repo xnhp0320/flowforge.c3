@@ -64,8 +64,8 @@ fn void test_multiport_transmission_totals_and_overflow() @test {
 
 fn void test_statistics_group_by_actual_port_id() @test {
 	WorkerResult[3] tx = {
-		{ .port_id = 2, .tx_sent = 3, .tx_attempted = 5 },
-		{ .port_id = 7, .tx_sent = 11, .tx_attempted = 12 },
+		{ .port_id = 2, .tx_sent = 3, .tx_attempted = 5, .tx_errors = 2 },
+		{ .port_id = 7, .tx_sent = 11, .tx_attempted = 12, .tx_errors = 1 },
 		{ .port_id = 2, .tx_sent = 4, .tx_attempted = 4 },
 	};
 	WorkerResult[2] rx = {
@@ -74,7 +74,7 @@ fn void test_statistics_group_by_actual_port_id() @test {
 	};
 	PortResult a = runtime::summarize_port_workers(2, tx[..], rx[..]);
 	PortResult b = runtime::summarize_port_workers(7, tx[..], rx[..]);
-	assert(a.tx_sent == 7 && a.tx_attempted == 9 && a.rx_received == 3 && a.rx_bytes == 450);
-	assert(b.tx_sent == 11 && b.tx_attempted == 12 && b.rx_received == 2 && b.rx_bytes == 200);
+	assert(a.tx_sent == 7 && a.tx_attempted == 9 && a.tx_errors == 2 && a.rx_received == 3 && a.rx_bytes == 450);
+	assert(b.tx_sent == 11 && b.tx_attempted == 12 && b.tx_errors == 1 && b.rx_received == 2 && b.rx_bytes == 200);
 	assert(a.tx_sent + b.tx_sent == 18 && a.rx_bytes + b.rx_bytes == 650);
 }
