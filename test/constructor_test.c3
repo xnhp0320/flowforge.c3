@@ -491,3 +491,25 @@ fn void test_bit_ranges_normalize_range_syntax() @test {
 	assert(list[1].first == 2);
 	assert(list[1].last == 3);
 }
+
+fn void test_range_steps_are_preserved_by_constructor() @test {
+	Registry reg = registry::create_empty_registry();
+	reg.register_header("MyHdr", { registry::fld("field", "b16_ranges") });
+	BuildResult result = build_with(`MyHdr(field="[1-10(step=2), 20-30(step = 3)]")`, &reg);
+	assert(result.ok);
+	UIntRange[] ranges = get_field(hdrs(result)[0], "field").value.uint_ranges_val;
+	assert(ranges.len == 2);
+	assert(ranges[0].first == 1 && ranges[0].last == 10 && ranges[0].step == 2);
+	assert(ranges[1].first == 20 && ranges[1].last == 30 && ranges[1].step == 3);
+}
+
+fn void test_ip_range_steps_are_preserved_by_constructor() @test {
+	BuildResult result = build_default(
+		`IP(src="10.0.0.1-10.0.0.10(step=2)")/IPv6(src="2001:db8::1-2001:db8::10(step=3)")`);
+	assert(result.ok);
+	PacketConstructor headers = hdrs(result);
+	IPv4Range[] ranges4 = get_field(headers[0], "src").value.ipv4_ranges_val;
+	IPv6Range[] ranges6 = get_field(headers[1], "src").value.ipv6_ranges_val;
+	assert(ranges4[0].step == 2);
+	assert(ranges6[0].step == 3);
+}

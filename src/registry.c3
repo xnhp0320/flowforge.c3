@@ -249,6 +249,7 @@ fn Result{bool, String} validate_constructor_value(String type_name, Constructor
 				return result::err("bit range constructor fields require integer or range list values");
 			}
 			foreach (r : value.uint_ranges_val) {
+				if (r.step == 0) return result::err("range step must be greater than zero");
 				if (r.first > r.last) {
 					return result::err(string::tformat("range %d-%d has first value greater than last value", r.first, r.last));
 				}

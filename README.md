@@ -186,6 +186,23 @@ of generated packets (defaults to the full cartesian product of all ranges).
 `PACKET_COUNT:` in a program must be a positive integer; it cannot be combined
 with `-c`. Duplicate variable names are rejected.
 
+### Range steps
+
+Explicit integer, IPv4, and IPv6 ranges accept a decimal positive step:
+
+```text
+TCP(sport="1-100(step=2)")
+IP(src="10.0.0.1-10.0.0.100(step=2)")
+IPv6(src="2001:db8::1-2001:db8::ff(step=2)")
+TCP(sport="[1-10(step=2), 20-30(step=3)]")
+```
+
+Each list entry may have its own step. The default is `step=1`. The end value
+is included only when the sequence lands on it, so `1-100(step=2)` ends at 99.
+A step larger than the range produces only its first value. Steps are not
+supported on scalar values, CIDR ranges, descending ranges, or with zero or
+negative values.
+
 ## Layout
 
 - `src/` — lexer, parser, AST, registry, validators, checker, value/constructor

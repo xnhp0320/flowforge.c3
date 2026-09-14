@@ -424,6 +424,52 @@ fn void test_checker_bit_range_list_accepts_hex_and_binary() @test {
 	assert(result.errors.len() == 0);
 }
 
+fn void test_checker_accepts_range_steps_for_all_range_types() @test {
+	Packet pkt = testutil::must_parse(
+		"IP(src=\"10.0.0.1-10.0.0.100(step=2)\")/IPv6(src=\"2001:db8::1-2001:db8::ff(step=2)\")/TCP(sport=\"1-100(step=2)\")");
+	Checker checker = checker::checker_with_default();
+	CheckResult result = checker.check(pkt);
+	assert(result.ok);
+	assert(result.errors.len() == 0);
+}
+
+fn void test_checker_accepts_per_range_steps_in_lists() @test {
+	Packet pkt = testutil::must_parse("TCP(sport=\"[1-10(step=2), 20-30(step=3)]\")");
+	Checker checker = checker::checker_with_default();
+	CheckResult result = checker.check(pkt);
+	assert(result.ok);
+	assert(result.errors.len() == 0);
+}
+
+fn void test_checker_rejects_invalid_range_steps() @test {
+	String[] values = {
+		"1-10(step=0)",
+		"1-10(step=-2)",
+		"1-10(step=)",
+		"1-10(step=0x2)",
+		"1-10(foo=2)",
+		"1-10(step=2)(step=3)",
+		"1-10(step=18446744073709551616)",
+		"1(step=2)",
+	};
+	foreach (raw : values) {
+		Packet pkt = testutil::must_parse(string::tformat("TCP(sport=\"%s\")", raw));
+		Checker checker = checker::checker_with_default();
+		CheckResult result = checker.check(pkt);
+		assert(!result.ok);
+		assert(result.errors.len() == 1);
+	}
+}
+
+fn void test_checker_rejects_range_step_on_cidr() @test {
+	Packet pkt = testutil::must_parse("IP(src=\"10.0.0.0/24(step=2)\")");
+	Checker checker = checker::checker_with_default();
+	CheckResult result = checker.check(pkt);
+	assert(!result.ok);
+	assert(result.errors.len() == 1);
+	assert(result.errors[0].contains("CIDR"));
+}
+
 fn void test_checker_bit_range_list_rejects_out_of_width_value() @test {
 	Packet pkt = testutil::must_parse("MyHdr(field=\"65536\")");
 	Registry reg = registry::create_default_registry();

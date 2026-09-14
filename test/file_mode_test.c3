@@ -2,6 +2,7 @@ module flowforge_file_mode_test;
 import flowforge::generator;
 import flowforge::pcap;
 import flowforge::registry;
+import flowforge::serializer;
 import flowforge::testutil;
 import std::collections::list;
 import std::io;
@@ -82,6 +83,28 @@ fn void test_generator_completes_each_modifier_round_and_produces_cartesian_prod
 		ushort sport = ((ushort)payload[20] << 8) | (ushort)payload[21];
 		assert(sport == expected_sport[flow_index]);
 	}
+}
+
+fn void test_generator_expands_stepped_cartesian_ranges() @test {
+	Registry reg = registry::create_default_registry();
+	PacketGenerator gen = { .registry = &reg };
+	PacketGenerationResult result = gen.prepare(
+		testutil::must_parse(`IP(src="10.0.0.1-10.0.0.6(step=2)",dst="10.0.1.1")/UDP(sport="100-105(step=2)",dport=53)`));
+	assert(result.ok);
+	assert(result.packet.flow_plan.total_flows == 9);
+	char[9] expected_src = { 1, 3, 5, 1, 3, 5, 1, 3, 5 };
+	ushort[9] expected_sport = { 100, 100, 100, 102, 102, 102, 104, 104, 104 };
+	List{String} errors;
+	errors.tinit();
+	for (ulong flow = 0; flow < 9; flow++) {
+		char[] payload = result.packet.payload_for_flow(flow, tmem, &errors)!!;
+		assert(payload[15] == expected_src[flow]);
+		assert(((ushort)payload[20] << 8 | (ushort)payload[21]) == expected_sport[flow]);
+		assert(serializer::fold_checksum(serializer::checksum_sum(payload[..20])) == 0xffff);
+		uint pseudo = serializer::ipv4_pseudo_sum(payload, 0, (char)17, (ushort)8);
+		assert(serializer::fold_checksum(pseudo + serializer::checksum_sum(payload[20:8])) == 0xffff);
+	}
+	assert(errors.len() == 0);
 }
 
 fn void test_generator_applies_flow_into_prefilled_buffer_repeatedly() @test {

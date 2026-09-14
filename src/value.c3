@@ -92,16 +92,19 @@ fn String IPv6.to_string(self) {
 struct IPv4Range {
 	IPv4 first;
 	IPv4 last;
+	ulong step;
 }
 
 struct IPv6Range {
 	IPv6 first;
 	IPv6 last;
+	ulong step;
 }
 
 struct UIntRange {
 	ulong first;
 	ulong last;
+	ulong step;
 }
 
 enum ConstructorValueKind {
@@ -204,15 +207,16 @@ fn bool cv_equals(ConstructorValue a, ConstructorValue b) {
 			for (usz i = 0; i < a.uint_ranges_val.len; i++) {
 				if (a.uint_ranges_val[i].first != b.uint_ranges_val[i].first) return false;
 				if (a.uint_ranges_val[i].last != b.uint_ranges_val[i].last) return false;
+				if (a.uint_ranges_val[i].step != b.uint_ranges_val[i].step) return false;
 			}
 			return true;
 	}
 }
 
 fn bool ipv4_range_equals(IPv4Range a, IPv4Range b) {
-	return a.first.bytes == b.first.bytes && a.last.bytes == b.last.bytes;
+	return a.first.bytes == b.first.bytes && a.last.bytes == b.last.bytes && a.step == b.step;
 }
 
 fn bool ipv6_range_equals(IPv6Range a, IPv6Range b) {
-	return a.first.bytes == b.first.bytes && a.last.bytes == b.last.bytes;
+	return a.first.bytes == b.first.bytes && a.last.bytes == b.last.bytes && a.step == b.step;
 }

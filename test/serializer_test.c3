@@ -231,6 +231,104 @@ fn void test_serializes_first_bit_range_value_into_base_payload() @test {
 	assert(modifier.value_count == 3);
 }
 
+fn void test_integer_range_step_counts_and_applies_values() @test {
+	Registry reg = registry::create_empty_registry();
+	reg.register_header("MyHdr", { registry::fld("field", "b16_ranges") });
+	BuildResult built = build_with(`MyHdr(field="[1-100(step=2)]")`, &reg);
+	assert(built.ok);
+	char[2] buf;
+	SerializeResult result = serializer::serialize_packet(built.packet, &reg, buf[..]);
+	assert(result.ok);
+	PayloadFieldModifier* modifier = find_modifier(result, "MyHdr", "field");
+	assert(modifier != null);
+	assert(modifier.has_custom_step);
+	assert(modifier.value_count == 50);
+	assert(modifier.apply(buf[..], 49).is_ok);
+	assert(u16_at(buf[..], 0) == 99);
+	assert(!modifier.apply(buf[..], 50).is_ok);
+}
+
+fn void test_mixed_range_list_uses_each_ranges_step() @test {
+	Registry reg = registry::create_empty_registry();
+	reg.register_header("MyHdr", { registry::fld("field", "b16_ranges") });
+	BuildResult built = build_with(`MyHdr(field="[1-5, 10-15(step=2)]")`, &reg);
+	assert(built.ok);
+	char[2] buf;
+	SerializeResult result = serializer::serialize_packet(built.packet, &reg, buf[..]);
+	assert(result.ok);
+	PayloadFieldModifier* modifier = find_modifier(result, "MyHdr", "field");
+	assert(modifier != null);
+	assert(modifier.has_custom_step);
+	assert(modifier.value_count == 8);
+	assert(modifier.apply(buf[..], 5).is_ok);
+	assert(u16_at(buf[..], 0) == 10);
+	assert(modifier.apply(buf[..], 7).is_ok);
+	assert(u16_at(buf[..], 0) == 14);
+}
+
+fn void test_range_step_can_hit_endpoint_or_exceed_span() @test {
+	Registry reg = registry::create_empty_registry();
+	reg.register_header("MyHdr", { registry::fld("field", "b16_ranges") });
+	BuildResult built = build_with(`MyHdr(field="[1-5(step=2), 10-12(step=100)]")`, &reg);
+	assert(built.ok);
+	char[2] buf;
+	SerializeResult result = serializer::serialize_packet(built.packet, &reg, buf[..]);
+	assert(result.ok);
+	PayloadFieldModifier* modifier = find_modifier(result, "MyHdr", "field");
+	assert(modifier != null && modifier.value_count == 4);
+	assert(modifier.apply(buf[..], 2).is_ok);
+	assert(u16_at(buf[..], 0) == 5);
+	assert(modifier.apply(buf[..], 3).is_ok);
+	assert(u16_at(buf[..], 0) == 10);
+}
+
+fn void test_unit_step_ranges_keep_fast_path() @test {
+	Registry reg = registry::create_empty_registry();
+	reg.register_header("MyHdr", { registry::fld("field", "b16_ranges") });
+	BuildResult built = build_with(`MyHdr(field="[1-3, 10-12(step=1)]")`, &reg);
+	assert(built.ok);
+	char[2] buf;
+	SerializeResult result = serializer::serialize_packet(built.packet, &reg, buf[..]);
+	assert(result.ok);
+	PayloadFieldModifier* modifier = find_modifier(result, "MyHdr", "field");
+	assert(modifier != null);
+	assert(!modifier.has_custom_step);
+	assert(modifier.value_count == 6);
+	assert(modifier.apply(buf[..], 5).is_ok);
+	assert(u16_at(buf[..], 0) == 12);
+}
+
+fn void test_ip_range_steps_count_and_apply_values() @test {
+	BuildResult built = build_default(
+		`IP(src="10.0.0.1-10.0.0.100(step=2)")/IPv6(src="2001:db8::1-2001:db8::ff(step=2)")`);
+	assert(built.ok);
+	char[60] buf;
+	SerializeResult result = serialize_into(built.packet, buf[..]);
+	assert(result.ok);
+	PayloadFieldModifier* modifier4 = find_modifier(result, "IP", "src");
+	PayloadFieldModifier* modifier6 = find_modifier(result, "IPv6", "src");
+	assert(modifier4 != null && modifier6 != null);
+	assert(modifier4.has_custom_step && modifier4.value_count == 50);
+	assert(modifier6.has_custom_step && modifier6.value_count == 128);
+	assert(modifier4.apply(buf[..], 49).is_ok);
+	assert(byte_at(buf[..], 12) == 10 && byte_at(buf[..], 15) == 99);
+	assert(modifier6.apply(buf[..], 127).is_ok);
+	assert(byte_at(buf[..], 43) == 0xff);
+}
+
+fn void test_large_ipv6_stepped_range_saturates_count() @test {
+	BuildResult built = build_default(
+		`IPv6(src="::-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff(step=18446744073709551615)")`);
+	assert(built.ok);
+	char[40] buf;
+	SerializeResult result = serialize_into(built.packet, buf[..]);
+	assert(result.ok);
+	PayloadFieldModifier* modifier = find_modifier(result, "IPv6", "src");
+	assert(modifier != null);
+	assert(modifier.has_custom_step);
+	assert(modifier.value_count == ulong::max);
+}
+
 fn void test_modifier_applies_list_index_to_payload() @test {
 	BuildResult built = build_default(`IP(src="[10.0.0.1-10.0.0.2, 10.0.1.1-10.0.1.2]")`);
 	assert(built.ok);

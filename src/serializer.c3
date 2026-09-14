@@ -30,16 +30,19 @@ enum ModifierPatchKind {
 struct UIntPatchRange {
 	ulong first;
 	ulong count;
+	ulong step;
 }
 
 struct IPv4PatchRange {
 	uint first;
 	ulong count;
+	ulong step;
 }
 
 struct IPv6PatchRange {
 	IPv6 first;
 	ulong count;
+	ulong step;
 }
 
 struct PayloadFieldModifier {
@@ -51,6 +54,7 @@ struct PayloadFieldModifier {
 	ulong value_count;
 	ModifierValueKind values_kind;
 	ModifierPatchKind patch_kind;
+	bool has_custom_step;
 	union {
 		UIntPatchRange[] uint_ranges;
 		IPv4PatchRange[] ipv4_ranges;
@@ -215,15 +219,23 @@ fn ulong saturated_add_count(ulong left, ulong right) {
 }
 
 fn ulong uint_range_count(UIntRange r) {
-	if (r.last - r.first == ulong::max) return ulong::max;
-	return r.last - r.first + 1;
+	ulong difference = r.last - r.first;
+	if (r.step == 1) return difference == ulong::max ? ulong::max : difference + 1;
+	return difference / r.step + 1;
 }
 
 fn ulong ipv4_range_count(IPv4Range r) {
-	return (ulong)(cvalue::ipv4_to_u32(r.last) - cvalue::ipv4_to_u32(r.first)) + 1;
+	ulong difference = (ulong)(cvalue::ipv4_to_u32(r.last) - cvalue::ipv4_to_u32(r.first));
+	if (r.step == 1) return difference + 1;
+	return difference / r.step + 1;
 }
 
 fn ulong ipv6_range_count(IPv6Range r) {
+	if (r.step > 1) {
+		uint128 difference = cvalue::ipv6_to_u128(r.last) - cvalue::ipv6_to_u128(r.first);
+		uint128 quotient = difference / (uint128)r.step;
+		return quotient >= (uint128)ulong::max ? ulong::max : (ulong)quotient + 1;
+	}
 	char[16] first = r.first.bytes;
 	char[16] last = r.last.bytes;
 	char[16] diff;
@@ -322,6 +334,11 @@ fn IPv6 add_ipv6_offset(IPv6 ip, ulong offset) {
 	return value::ipv6_from_bytes(bytes);
 }
 
+fn IPv6 add_ipv6_stepped_offset(IPv6 ip, ulong offset, ulong step) {
+	uint128 value = cvalue::ipv6_to_u128(ip) + (uint128)offset * (uint128)step;
+	return cvalue::ipv6_from_u128(value);
+}
+
 // --- PayloadFieldModifier ----------------------------------------------
 
 fn ModifierPatchKind patch_kind_for(ModifierValueKind values_kind, usz bit_offset, usz bit_width) {
@@ -372,21 +389,34 @@ fn Result{bool, String} PayloadFieldModifier.apply(&self, char[] payload, ulong 
 			if (catch found) {
 				return result::err(string::tformat("value index %d is out of range for modifier '%s.%s'", value_index, self.protocol, self.field));
 			}
-			write_modifier_value(self, payload, found.range.first + found.offset);
+			if (!self.has_custom_step) {
+				write_modifier_value(self, payload, found.range.first + found.offset);
+				return result::ok(true);
+			}
+			write_modifier_value(self, payload, found.range.first + found.offset * found.range.step);
 			return result::ok(true);
 		case IPV4_RANGES:
 			Ipv4RangeAt? found = ipv4_range_at_index(self.ipv4_ranges, value_index);
 			if (catch found) {
 				return result::err(string::tformat("value index %d is out of range for modifier '%s.%s'", value_index, self.protocol, self.field));
 			}
-			write_modifier_value(self, payload, (ulong)(found.range.first + (uint)found.offset));
+			if (!self.has_custom_step) {
+				write_modifier_value(self, payload, (ulong)(found.range.first + (uint)found.offset));
+				return result::ok(true);
+			}
+			write_modifier_value(self, payload, (ulong)(found.range.first + (uint)(found.offset * found.range.step)));
 			return result::ok(true);
 		case IPV6_RANGES:
 			Ipv6RangeAt? found = ipv6_range_at_index(self.ipv6_ranges, value_index);
 			if (catch found) {
 				return result::err(string::tformat("value index %d is out of range for modifier '%s.%s'", value_index, self.protocol, self.field));
 			}
-			IPv6 ip = add_ipv6_offset(found.range.first, found.offset);
+			if (!self.has_custom_step) {
+				IPv6 ip = add_ipv6_offset(found.range.first, found.offset);
+				write_modifier_value(self, payload, 0, ip);
+				return result::ok(true);
+			}
+			IPv6 ip = add_ipv6_stepped_offset(found.range.first, found.offset, found.range.step);
 			write_modifier_value(self, payload, 0, ip);
 			return result::ok(true);
 	}
@@ -407,13 +437,17 @@ fn uint? PayloadFieldModifier.ipv4_pseudo_delta(&self, PacketFixupPlan plan, ulo
 
 	Ipv4RangeAt? found = ipv4_range_at_index(self.ipv4_ranges, value_index);
 	if (catch found) return OUT_OF_RANGE~;
-	return ipv4_replace_delta(self.ipv4_ranges[0].first, found.range.first + (uint)found.offset);
+	if (!self.has_custom_step) {
+		return ipv4_replace_delta(self.ipv4_ranges[0].first, found.range.first + (uint)found.offset);
+	}
+	return ipv4_replace_delta(self.ipv4_ranges[0].first,
+		found.range.first + (uint)(found.offset * found.range.step));
 }
 
 fn UIntPatchRange[] make_uint_patch_ranges(UIntRange[] src) {
 	UIntPatchRange[] dst = mem::temp_array(UIntPatchRange, src.len);
 	foreach (i, r : src) {
-		dst[i] = { .first = r.first, .count = uint_range_count(r) };
+		dst[i] = { .first = r.first, .count = uint_range_count(r), .step = r.step };
 	}
 	return dst;
 }
@@ -421,7 +455,7 @@ fn UIntPatchRange[] make_uint_patch_ranges(UIntRange[] src) {
 fn IPv4PatchRange[] make_ipv4_patch_ranges(IPv4Range[] src) {
 	IPv4PatchRange[] dst = mem::temp_array(IPv4PatchRange, src.len);
 	foreach (i, r : src) {
-		dst[i] = { .first = cvalue::ipv4_to_u32(r.first), .count = ipv4_range_count(r) };
+		dst[i] = { .first = cvalue::ipv4_to_u32(r.first), .count = ipv4_range_count(r), .step = r.step };
 	}
 	return dst;
 }
@@ -429,9 +463,24 @@ fn IPv4PatchRange[] make_ipv4_patch_ranges(IPv4Range[] src) {
 fn IPv6PatchRange[] make_ipv6_patch_ranges(IPv6Range[] src) {
 	IPv6PatchRange[] dst = mem::temp_array(IPv6PatchRange, src.len);
 	foreach (i, r : src) {
-		dst[i] = { .first = r.first, .count = ipv6_range_count(r) };
+		dst[i] = { .first = r.first, .count = ipv6_range_count(r), .step = r.step };
 	}
 	return dst;
+}
+
+fn bool uint_ranges_have_custom_step(UIntRange[] ranges) {
+	foreach (range : ranges) if (range.step > 1) return true;
+	return false;
+}
+
+fn bool ipv4_ranges_have_custom_step(IPv4Range[] ranges) {
+	foreach (range : ranges) if (range.step > 1) return true;
+	return false;
+}
+
+fn bool ipv6_ranges_have_custom_step(IPv6Range[] ranges) {
+	foreach (range : ranges) if (range.step > 1) return true;
+	return false;
 }
 
 // --- packet layout helpers (mirrors constructor.c3's own local layout
@@ -574,6 +623,7 @@ fn PayloadFieldModifier? make_modifier(HeaderConstructor header, FieldSpec* spec
 			IPv4Range[] one = mem::temp_array(IPv4Range, 1);
 			one[0] = field.value.ipv4_range_val;
 			modifier.values_kind = ModifierValueKind.IPV4_RANGES;
+			modifier.has_custom_step = field.value.ipv4_range_val.step > 1;
 			modifier.patch_kind = patch_kind_for(modifier.values_kind, bit_offset, spec.bit_width);
 			modifier.ipv4_ranges = make_ipv4_patch_ranges(one);
 			modifier.value_count = count;
@@ -584,6 +634,7 @@ fn PayloadFieldModifier? make_modifier(HeaderConstructor header, FieldSpec* spec
 			IPv6Range[] one = mem::temp_array(IPv6Range, 1);
 			one[0] = field.value.ipv6_range_val;
 			modifier.values_kind = ModifierValueKind.IPV6_RANGES;
+			modifier.has_custom_step = field.value.ipv6_range_val.step > 1;
 			modifier.patch_kind = patch_kind_for(modifier.values_kind, bit_offset, spec.bit_width);
 			modifier.ipv6_ranges = make_ipv6_patch_ranges(one);
 			modifier.value_count = count;
@@ -597,6 +648,7 @@ fn PayloadFieldModifier? make_modifier(HeaderConstructor header, FieldSpec* spec
 			ulong count = total_uint_value_count(ranges);
 			if (count <= 1) return NO_MODIFIER~;
 			modifier.values_kind = ModifierValueKind.UINT_RANGES;
+			modifier.has_custom_step = uint_ranges_have_custom_step(ranges);
 			modifier.patch_kind = patch_kind_for(modifier.values_kind, bit_offset, spec.bit_width);
 			modifier.uint_ranges = make_uint_patch_ranges(ranges);
 			modifier.value_count = count;
@@ -610,6 +662,7 @@ fn PayloadFieldModifier? make_modifier(HeaderConstructor header, FieldSpec* spec
 			ulong count = total_ipv4_value_count(ranges4);
 			if (count <= 1) return NO_MODIFIER~;
 			modifier.values_kind = ModifierValueKind.IPV4_RANGES;
+			modifier.has_custom_step = ipv4_ranges_have_custom_step(ranges4);
 			modifier.patch_kind = patch_kind_for(modifier.values_kind, bit_offset, spec.bit_width);
 			modifier.ipv4_ranges = make_ipv4_patch_ranges(ranges4);
 			modifier.value_count = count;
@@ -623,6 +676,7 @@ fn PayloadFieldModifier? make_modifier(HeaderConstructor header, FieldSpec* spec
 			ulong count = total_ipv6_value_count(ranges6);
 			if (count <= 1) return NO_MODIFIER~;
 			modifier.values_kind = ModifierValueKind.IPV6_RANGES;
+			modifier.has_custom_step = ipv6_ranges_have_custom_step(ranges6);
 			modifier.patch_kind = patch_kind_for(modifier.values_kind, bit_offset, spec.bit_width);
 			modifier.ipv6_ranges = make_ipv6_patch_ranges(ranges6);
 			modifier.value_count = count;
