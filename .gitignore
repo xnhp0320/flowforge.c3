@@ -7,3 +7,6 @@ __pycache__/
 
 # Local-only deployment doc (internal, not published)
 sync_to_E2.md
+
+# Local-only header file (shipped to E2 out-of-band, not published)
+/headers/tr_meta.hdr

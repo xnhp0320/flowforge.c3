@@ -52,6 +52,16 @@ fn void test_unstarted_live_port_run_fails_with_warning_only() @test {
 	assert(result.errors.len() == 0);
 }
 
+fn void test_started_live_port_run_succeeds_with_worker_warning() @test {
+	Result result;
+	result.tinit();
+	result.warnings.push("ff_pktmbuf_raw_alloc_bulk failed for 64 packet(s): Success");
+	runtime::finish_live_port_run(&result, true);
+	assert(result.ok);
+	assert(result.warnings.len() == 1);
+	assert(result.errors.len() == 0);
+}
+
 <* Mirrors RuntimeTest.AppliesDpdkOffloadRequestToMbufMetadata. Exercises the
    real C3 offload wrapper + C shim against a standalone (EAL-free) mbuf. *>
 fn void test_applies_dpdk_offload_request_to_mbuf_metadata() @test {

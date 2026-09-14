@@ -103,6 +103,7 @@ struct WorkerContext {
 	ulong tx_sent;
 	ulong tx_errors;
 	PublishedWorkerStats* published_stats;
+	List{String} warnings;
 	List{String} errors;
 }
 
@@ -638,12 +639,12 @@ fn bool transmit_batch(WorkerContext* context, Mbuf** packets, ushort count) @pr
 	return prepared == count;
 }
 
-// Worker error strings are built with tmem but are read back by the main thread
+// Worker messages are built with tmem but are read back by the main thread
 // after the worker's pool is destroyed, so copy them onto the (main-owned) heap
 // list before the pool unwinds.
-fn void heapify_errors(List{String}* errors) @private {
-	foreach (i, e : errors) {
-		errors.set(i, e.copy(mem));
+fn void heapify_messages(List{String}* messages) @private {
+	foreach (i, message : messages) {
+		messages.set(i, message.copy(mem));
 	}
 }
 
@@ -652,7 +653,8 @@ fn int run_worker_once(void* arg) @private {
 	int rc;
 	@pool_init(mem, RUNTIME_WORKER_POOL_SIZE) {
 		rc = run_worker_once_impl(context);
-		heapify_errors(&context.errors);
+		heapify_messages(&context.warnings);
+		heapify_messages(&context.errors);
 	};
 	return rc;
 }
@@ -667,8 +669,8 @@ fn int run_worker_once_impl(WorkerContext* context) @private {
 		ulong remaining = planned - transmitted;
 		ushort count = (ushort)(context.batch_size < remaining ? context.batch_size : remaining);
 		if (alloc_worker_mbufs(context, &batch[0], count) != 0) {
-			context.errors.push(string::tformat("ff_pktmbuf_raw_alloc_bulk failed for %d packet(s): %s", count, dpdk::strerror(dpdk::ff_rte_errno())));
-			return 1;
+			context.warnings.push(string::tformat("ff_pktmbuf_raw_alloc_bulk failed for %d packet(s): %s", count, dpdk::strerror(dpdk::ff_rte_errno())));
+			return 0;
 		}
 
 		if (has_flow_modifiers(context.packet)) {
@@ -696,7 +698,8 @@ fn int run_worker(void* arg) @private {
 	int rc;
 	@pool_init(mem, RUNTIME_WORKER_POOL_SIZE) {
 		rc = run_worker_impl(context);
-		heapify_errors(&context.errors);
+		heapify_messages(&context.warnings);
+		heapify_messages(&context.errors);
 	};
 	return rc;
 }
@@ -709,8 +712,8 @@ fn int run_worker_impl(WorkerContext* context) @private {
 	while (!runtime_stop_requested) {
 		ushort count = context.batch_size;
 		if (alloc_worker_mbufs(context, &batch[0], count) != 0) {
-			context.errors.push(string::tformat("ff_pktmbuf_raw_alloc_bulk failed for %d packet(s): %s", count, dpdk::strerror(dpdk::ff_rte_errno())));
-			return 1;
+			context.warnings.push(string::tformat("ff_pktmbuf_raw_alloc_bulk failed for %d packet(s): %s", count, dpdk::strerror(dpdk::ff_rte_errno())));
+			return 0;
 		}
 
 		if (has_flow_modifiers(context.packet)) {
@@ -985,7 +988,9 @@ fn bool run_traffic(ushort[] ports, Mempool* mbuf_pool, GeneratedPacket* packet,
 	// TX worker on the calling thread so the common single-core case still runs.
 	if (nworkers == 0 && rx_threads == 0 && tx_threads == 1) {
 		WorkerContext context;
+		context.warnings.init(mem);
 		context.errors.init(mem);
+		defer context.warnings.free();
 		defer context.errors.free();
 		context.worker_id = 0;
 		context.lcore_id = dpdk::ff_lcore_id();
@@ -1007,6 +1012,7 @@ fn bool run_traffic(ushort[] ports, Mempool* mbuf_pool, GeneratedPacket* packet,
 		result.tx_sent += context.tx_sent;
 		result.tx_errors += context.tx_errors;
 		workers.push(make_worker_result(&context));
+		foreach (warning : context.warnings) result.warnings.push(warning);
 		foreach (e : context.errors) errors.push(e);
 		return rc == 0;
 	}
@@ -1040,6 +1046,7 @@ fn bool run_traffic(ushort[] ports, Mempool* mbuf_pool, GeneratedPacket* packet,
 	for (ulong worker = 0; worker < tx_threads; worker++) {
 		WorkerContext* context = &tx_ctxs[worker];
 		*context = {};
+		context.warnings.init(mem);
 		context.errors.init(mem);
 		context.worker_id = worker;
 		context.lcore_id = lcore_buf[worker];
@@ -1061,6 +1068,7 @@ fn bool run_traffic(ushort[] ports, Mempool* mbuf_pool, GeneratedPacket* packet,
 		LcoreFunction worker_fn = options.once ? &run_worker_once : &run_worker;
 		int rc = dpdk::rte_eal_remote_launch(worker_fn, context, lcore_buf[worker]);
 		if (rc < 0) {
+			context.warnings.free();
 			context.errors.free();
 			errors.push(string::tformat("rte_eal_remote_launch failed for TX lcore %d: %s", lcore_buf[worker], dpdk::strerror(-rc)));
 			ok = false;
@@ -1103,7 +1111,9 @@ fn bool run_traffic(ushort[] ports, Mempool* mbuf_pool, GeneratedPacket* packet,
 		result.tx_sent += tx_ctxs[i].tx_sent;
 		result.tx_errors += tx_ctxs[i].tx_errors;
 		workers.push(make_worker_result(&tx_ctxs[i]));
+		foreach (warning : tx_ctxs[i].warnings) result.warnings.push(warning);
 		foreach (e : tx_ctxs[i].errors) errors.push(e);
+		tx_ctxs[i].warnings.free();
 		tx_ctxs[i].errors.free();
 	}
 	for (usz i = 0; i < rx_launched; i++) {
