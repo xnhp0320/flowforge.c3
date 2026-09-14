@@ -262,8 +262,9 @@ fn void cleanup_eal(List{String}* warnings) @private {
 
 fn uint mbuf_count_for(ulong worker_count, ushort batch_size) @private {
 	ulong in_flight = worker_count * ((ulong)RUNTIME_TX_DESCRIPTORS + (ulong)batch_size * 2);
-	ulong total = in_flight + RUNTIME_MBUF_CACHE_SIZE;
-	if (total < 8191) total = 8191;
+	ulong cache_reserve = (worker_count + 1) * RUNTIME_MBUF_CACHE_SIZE;
+	ulong total = in_flight + cache_reserve;
+	if (total < 16383) total = 16383;
 	return (uint)total;
 }
 
