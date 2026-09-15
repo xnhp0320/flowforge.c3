@@ -91,12 +91,12 @@ fn void test_generator_expands_stepped_cartesian_ranges() @test {
 	PacketGenerationResult result = gen.prepare(
 		testutil::must_parse(`IP(src="10.0.0.1-10.0.0.6(step=2)",dst="10.0.1.1")/UDP(sport="100-105(step=2)",dport=53)`));
 	assert(result.ok);
-	assert(result.packet.flow_plan.total_flows == 9);
-	char[9] expected_src = { 1, 3, 5, 1, 3, 5, 1, 3, 5 };
-	ushort[9] expected_sport = { 100, 100, 100, 102, 102, 102, 104, 104, 104 };
+	assert(result.packet.flow_plan.total_flows == 36);
+	char[12] expected_src = { 1, 3, 5, 2, 4, 6, 1, 3, 5, 2, 4, 6 };
+	ushort[12] expected_sport = { 100, 100, 100, 100, 100, 100, 102, 102, 102, 102, 102, 102 };
 	List{String} errors;
 	errors.tinit();
-	for (ulong flow = 0; flow < 9; flow++) {
+	for (ulong flow = 0; flow < 12; flow++) {
 		char[] payload = result.packet.payload_for_flow(flow, tmem, &errors)!!;
 		assert(payload[15] == expected_src[flow]);
 		assert(((ushort)payload[20] << 8 | (ushort)payload[21]) == expected_sport[flow]);

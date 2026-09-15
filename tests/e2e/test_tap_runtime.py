@@ -164,15 +164,15 @@ def test_generates_cartesian_ipv6_and_tcp_port_ranges(packet_program, capture_pa
 def test_generates_stepped_ipv4_and_tcp_port_ranges(packet_program, capture_packets):
     program = packet_program(
         f'{ETHER}/IP(src="10.0.0.1-10.0.0.6(step=2)",dst="10.0.1.1")/'
-        'TCP(sport="100-105(step=2)",dport=443,flags=2)',
-        packet_count=9,
+        'TCP(sport="100-103(step=2)",dport=443,flags=2)',
+        packet_count=24,
     )
 
-    packets = capture_packets(program, 9)
+    packets = capture_packets(program, 24)
     assert {(packet[IP].src, packet[TCP].sport) for packet in packets} == {
         (f"10.0.0.{last}", sport)
-        for last in (1, 3, 5)
-        for sport in (100, 102, 104)
+        for last in range(1, 7)
+        for sport in range(100, 104)
     }
     for packet in packets:
         assert_ipv4_tcp_checksums(packet)
@@ -181,15 +181,15 @@ def test_generates_stepped_ipv4_and_tcp_port_ranges(packet_program, capture_pack
 def test_generates_stepped_ipv6_and_tcp_port_ranges(packet_program, capture_packets):
     program = packet_program(
         f'{ETHER}/IPv6(src="2001:db8::1-2001:db8::6(step=2)",dst="2001:db8::ff")/'
-        'TCP(sport="200-205(step=2)",dport=443,flags=2)',
-        packet_count=9,
+        'TCP(sport="200-203(step=2)",dport=443,flags=2)',
+        packet_count=24,
     )
 
-    packets = capture_packets(program, 9)
+    packets = capture_packets(program, 24)
     assert {(packet[IPv6].src, packet[TCP].sport) for packet in packets} == {
         (f"2001:db8::{last:x}", sport)
-        for last in (1, 3, 5)
-        for sport in (200, 202, 204)
+        for last in range(1, 7)
+        for sport in range(200, 204)
     }
     for packet in packets:
         assert_ipv6_tcp_checksum(packet)
@@ -199,11 +199,11 @@ def test_each_range_list_entry_uses_its_own_step(packet_program, capture_packets
     program = packet_program(
         f'{ETHER}/IP(src="192.0.2.1",dst="192.0.2.2")/'
         'TCP(sport="[1-5(step=2),10-12(step=100)]",dport=443,flags=2)',
-        packet_count=4,
+        packet_count=8,
     )
 
-    packets = capture_packets(program, 4)
-    assert {packet[TCP].sport for packet in packets} == {1, 3, 5, 10}
+    packets = capture_packets(program, 8)
+    assert {packet[TCP].sport for packet in packets} == {1, 2, 3, 4, 5, 10, 11, 12}
     for packet in packets:
         assert_ipv4_tcp_checksums(packet)
 

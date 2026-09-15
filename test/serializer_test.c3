@@ -241,11 +241,32 @@ fn void test_integer_range_step_counts_and_applies_values() @test {
 	assert(result.ok);
 	PayloadFieldModifier* modifier = find_modifier(result, "MyHdr", "field");
 	assert(modifier != null);
-	assert(modifier.has_custom_step);
-	assert(modifier.value_count == 50);
+	assert(modifier.has_custom_traversal);
+	assert(modifier.value_count == 100);
 	assert(modifier.apply(buf[..], 49).is_ok);
 	assert(u16_at(buf[..], 0) == 99);
-	assert(!modifier.apply(buf[..], 50).is_ok);
+	assert(modifier.apply(buf[..], 50).is_ok);
+	assert(u16_at(buf[..], 0) == 2);
+	assert(modifier.apply(buf[..], 99).is_ok);
+	assert(u16_at(buf[..], 0) == 100);
+	assert(!modifier.apply(buf[..], 100).is_ok);
+}
+
+fn void test_range_step_walks_all_congruence_groups() @test {
+	Registry reg = registry::create_empty_registry();
+	reg.register_header("MyHdr", { registry::fld("field", "b16_ranges") });
+	BuildResult built = build_with(`MyHdr(field="1-10(step=4)")`, &reg);
+	assert(built.ok);
+	char[2] buf;
+	SerializeResult result = serializer::serialize_packet(built.packet, &reg, buf[..]);
+	assert(result.ok);
+	PayloadFieldModifier* modifier = find_modifier(result, "MyHdr", "field");
+	assert(modifier != null && modifier.value_count == 10);
+	ushort[10] expected = { 1, 5, 9, 3, 7, 2, 6, 10, 4, 8 };
+	for (ulong index = 0; index < 10; index++) {
+		assert(modifier.apply(buf[..], index).is_ok);
+		assert(u16_at(buf[..], 0) == expected[index]);
+	}
 }
 
 fn void test_mixed_range_list_uses_each_ranges_step() @test {
@@ -258,15 +279,19 @@ fn void test_mixed_range_list_uses_each_ranges_step() @test {
 	assert(result.ok);
 	PayloadFieldModifier* modifier = find_modifier(result, "MyHdr", "field");
 	assert(modifier != null);
-	assert(modifier.has_custom_step);
-	assert(modifier.value_count == 8);
+	assert(modifier.has_custom_traversal);
+	assert(modifier.value_count == 11);
 	assert(modifier.apply(buf[..], 5).is_ok);
 	assert(u16_at(buf[..], 0) == 10);
 	assert(modifier.apply(buf[..], 7).is_ok);
 	assert(u16_at(buf[..], 0) == 14);
+	assert(modifier.apply(buf[..], 8).is_ok);
+	assert(u16_at(buf[..], 0) == 11);
+	assert(modifier.apply(buf[..], 10).is_ok);
+	assert(u16_at(buf[..], 0) == 15);
 }
 
-fn void test_range_step_can_hit_endpoint_or_exceed_span() @test {
+fn void test_range_step_traverses_complete_range_when_step_exceeds_span() @test {
 	Registry reg = registry::create_empty_registry();
 	reg.register_header("MyHdr", { registry::fld("field", "b16_ranges") });
 	BuildResult built = build_with(`MyHdr(field="[1-5(step=2), 10-12(step=100)]")`, &reg);
@@ -275,11 +300,15 @@ fn void test_range_step_can_hit_endpoint_or_exceed_span() @test {
 	SerializeResult result = serializer::serialize_packet(built.packet, &reg, buf[..]);
 	assert(result.ok);
 	PayloadFieldModifier* modifier = find_modifier(result, "MyHdr", "field");
-	assert(modifier != null && modifier.value_count == 4);
+	assert(modifier != null && modifier.value_count == 8);
 	assert(modifier.apply(buf[..], 2).is_ok);
 	assert(u16_at(buf[..], 0) == 5);
 	assert(modifier.apply(buf[..], 3).is_ok);
+	assert(u16_at(buf[..], 0) == 2);
+	assert(modifier.apply(buf[..], 5).is_ok);
 	assert(u16_at(buf[..], 0) == 10);
+	assert(modifier.apply(buf[..], 7).is_ok);
+	assert(u16_at(buf[..], 0) == 12);
 }
 
 fn void test_unit_step_ranges_keep_fast_path() @test {
@@ -292,7 +321,7 @@ fn void test_unit_step_ranges_keep_fast_path() @test {
 	assert(result.ok);
 	PayloadFieldModifier* modifier = find_modifier(result, "MyHdr", "field");
 	assert(modifier != null);
-	assert(!modifier.has_custom_step);
+	assert(!modifier.has_custom_traversal);
 	assert(modifier.value_count == 6);
 	assert(modifier.apply(buf[..], 5).is_ok);
 	assert(u16_at(buf[..], 0) == 12);
@@ -308,12 +337,16 @@ fn void test_ip_range_steps_count_and_apply_values() @test {
 	PayloadFieldModifier* modifier4 = find_modifier(result, "IP", "src");
 	PayloadFieldModifier* modifier6 = find_modifier(result, "IPv6", "src");
 	assert(modifier4 != null && modifier6 != null);
-	assert(modifier4.has_custom_step && modifier4.value_count == 50);
-	assert(modifier6.has_custom_step && modifier6.value_count == 128);
+	assert(modifier4.has_custom_traversal && modifier4.value_count == 100);
+	assert(modifier6.has_custom_traversal && modifier6.value_count == 255);
 	assert(modifier4.apply(buf[..], 49).is_ok);
 	assert(byte_at(buf[..], 12) == 10 && byte_at(buf[..], 15) == 99);
 	assert(modifier6.apply(buf[..], 127).is_ok);
 	assert(byte_at(buf[..], 43) == 0xff);
+	assert(modifier4.apply(buf[..], 50).is_ok);
+	assert(byte_at(buf[..], 15) == 2);
+	assert(modifier6.apply(buf[..], 254).is_ok);
+	assert(byte_at(buf[..], 43) == 0xfe);
 }
 
 fn void test_large_ipv6_stepped_range_saturates_count() @test {
@@ -325,7 +358,7 @@ fn void test_large_ipv6_stepped_range_saturates_count() @test {
 	assert(result.ok);
 	PayloadFieldModifier* modifier = find_modifier(result, "IPv6", "src");
 	assert(modifier != null);
-	assert(modifier.has_custom_step);
+	assert(modifier.has_custom_traversal);
 	assert(modifier.value_count == ulong::max);
 }
 

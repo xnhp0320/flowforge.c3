@@ -197,11 +197,13 @@ IPv6(src="2001:db8::1-2001:db8::ff(step=2)")
 TCP(sport="[1-10(step=2), 20-30(step=3)]")
 ```
 
-Each list entry may have its own step. The default is `step=1`. The end value
-is included only when the sequence lands on it, so `1-100(step=2)` ends at 99.
-A step larger than the range produces only its first value. Steps are not
-supported on scalar values, CIDR ranges, descending ranges, or with zero or
-negative values.
+Each list entry may have its own step. The default is `step=1`. A step changes
+the traversal order without reducing the range's flow space. Values advance by
+the step and wrap inside the range; when the step and range length are not
+coprime, traversal continues with the next congruence group. For example,
+`1-10(step=4)` produces `1,5,9,3,7,2,6,10,4,8`, visiting every value once.
+Steps are not supported on scalar values, CIDR ranges, descending ranges, or
+with zero or negative values.
 
 ## Layout
 

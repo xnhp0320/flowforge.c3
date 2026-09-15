@@ -449,6 +449,8 @@ fn void test_checker_rejects_invalid_range_steps() @test {
 		"1-10(step=0x2)",
 		"1-10(foo=2)",
 		"1-10(step=2)(step=3)",
+		"1-10(step=2, step=3)",
+		"1-10(step=2, rand)",
 		"1-10(step=18446744073709551616)",
 		"1(step=2)",
 	};

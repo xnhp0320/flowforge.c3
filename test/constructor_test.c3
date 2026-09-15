@@ -483,6 +483,7 @@ fn void test_bit_ranges_normalize_range_syntax() @test {
 	assert(range.len == 1);
 	assert(range[0].first == 1);
 	assert(range[0].last == 2);
+	assert(!range[0].step.has_value);
 
 	UIntRange[] list = get_field(header, "list").value.uint_ranges_val;
 	assert(list.len == 2);
@@ -490,6 +491,7 @@ fn void test_bit_ranges_normalize_range_syntax() @test {
 	assert(list[0].last == 1);
 	assert(list[1].first == 2);
 	assert(list[1].last == 3);
+	assert(!list[0].step.has_value && !list[1].step.has_value);
 }
 
 fn void test_range_steps_are_preserved_by_constructor() @test {
@@ -499,8 +501,10 @@ fn void test_range_steps_are_preserved_by_constructor() @test {
 	assert(result.ok);
 	UIntRange[] ranges = get_field(hdrs(result)[0], "field").value.uint_ranges_val;
 	assert(ranges.len == 2);
-	assert(ranges[0].first == 1 && ranges[0].last == 10 && ranges[0].step == 2);
-	assert(ranges[1].first == 20 && ranges[1].last == 30 && ranges[1].step == 3);
+	assert(ranges[0].first == 1 && ranges[0].last == 10);
+	assert(ranges[0].step.has_value && ranges[0].step.value == 2);
+	assert(ranges[1].first == 20 && ranges[1].last == 30);
+	assert(ranges[1].step.has_value && ranges[1].step.value == 3);
 }
 
 fn void test_ip_range_steps_are_preserved_by_constructor() @test {
@@ -510,6 +514,6 @@ fn void test_ip_range_steps_are_preserved_by_constructor() @test {
 	PacketConstructor headers = hdrs(result);
 	IPv4Range[] ranges4 = get_field(headers[0], "src").value.ipv4_ranges_val;
 	IPv6Range[] ranges6 = get_field(headers[1], "src").value.ipv6_ranges_val;
-	assert(ranges4[0].step == 2);
-	assert(ranges6[0].step == 3);
+	assert(ranges4[0].step.has_value && ranges4[0].step.value == 2);
+	assert(ranges6[0].step.has_value && ranges6[0].step.value == 3);
 }

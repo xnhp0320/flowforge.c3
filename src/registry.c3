@@ -249,7 +249,7 @@ fn Result{bool, String} validate_constructor_value(String type_name, Constructor
 				return result::err("bit range constructor fields require integer or range list values");
 			}
 			foreach (r : value.uint_ranges_val) {
-				if (r.step == 0) return result::err("range step must be greater than zero");
+				if (r.step.has_value && r.step.value == 0) return result::err("range step must be greater than zero");
 				if (r.first > r.last) {
 					return result::err(string::tformat("range %d-%d has first value greater than last value", r.first, r.last));
 				}
@@ -282,23 +282,44 @@ fn Result{bool, String} validate_constructor_value(String type_name, Constructor
 		return result::err("ipv6 constructor fields require ipv6 address values");
 	}
 	if (type_name == "ipv4_range") {
-		if (value.kind == ConstructorValueKind.IPV4_RANGE) return result::ok(true);
-		return result::err("ipv4 range constructor fields require ipv4 range values");
+		if (value.kind != ConstructorValueKind.IPV4_RANGE) {
+			return result::err("ipv4 range constructor fields require ipv4 range values");
+		}
+		return validate_range_step(value.ipv4_range_val.step);
 	}
 	if (type_name == "ipv6_range") {
-		if (value.kind == ConstructorValueKind.IPV6_RANGE) return result::ok(true);
-		return result::err("ipv6 range constructor fields require ipv6 range values");
+		if (value.kind != ConstructorValueKind.IPV6_RANGE) {
+			return result::err("ipv6 range constructor fields require ipv6 range values");
+		}
+		return validate_range_step(value.ipv6_range_val.step);
 	}
 	if (type_name == "ipv4_ranges") {
-		if (value.kind == ConstructorValueKind.IPV4_RANGES) return result::ok(true);
-		return result::err("ipv4 ranges constructor fields require ipv4 range list values");
+		if (value.kind != ConstructorValueKind.IPV4_RANGES) {
+			return result::err("ipv4 ranges constructor fields require ipv4 range list values");
+		}
+		foreach (range : value.ipv4_ranges_val) {
+			Result{bool, String} valid = validate_range_step(range.step);
+			if (!valid.is_ok) return valid;
+		}
+		return result::ok(true);
 	}
 	if (type_name == "ipv6_ranges") {
-		if (value.kind == ConstructorValueKind.IPV6_RANGES) return result::ok(true);
-		return result::err("ipv6 ranges constructor fields require ipv6 range list values");
+		if (value.kind != ConstructorValueKind.IPV6_RANGES) {
+			return result::err("ipv6 ranges constructor fields require ipv6 range list values");
+		}
+		foreach (range : value.ipv6_ranges_val) {
+			Result{bool, String} valid = validate_range_step(range.step);
+			if (!valid.is_ok) return valid;
+		}
+		return result::ok(true);
 	}
 
 	return result::err(string::tformat("unsupported constructor type '%s'", type_name));
+}
+
+fn Result{bool, String} validate_range_step(Maybe{ulong} step) {
+	if (step.has_value && step.value == 0) return result::err("range step must be greater than zero");
+	return result::ok(true);
 }
 
 fn Result{bool, String} integer_fits(ulong integer, usz bit_width) {
