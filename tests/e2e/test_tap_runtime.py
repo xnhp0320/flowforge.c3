@@ -1,9 +1,13 @@
 from collections import Counter
 import re
+import socket
 
 import pytest
-from scapy.all import ICMP, ICMPv6EchoRequest, IP, IPv6, TCP, UDP
+from scapy.all import ICMP, ICMPv6EchoRequest, IP, IPv6, TCP, UDP, raw
+from scapy.layers.inet import in4_chksum
+from scapy.layers.inet6 import in6_chksum
 from scapy.layers.vxlan import VXLAN
+from scapy.utils import checksum
 
 
 ETHER = 'Ether(dst="ff:ff:ff:ff:ff:ff",src="02:64:74:61:70:00")'
@@ -11,6 +15,16 @@ TAP_IFACE = "packet_tap0"
 WORKER_RE = re.compile(
     r"PMD worker (\d+) lcore (\d+) queue (\d+) flows (\d+)\+(\d+) sent (\d+)/(\d+) packet\(s\)"
 )
+
+
+def assert_ipv4_tcp_checksums(packet):
+    ip = packet[IP]
+    assert checksum(raw(ip)[: ip.ihl * 4]) == 0
+    assert in4_chksum(socket.IPPROTO_TCP, ip, raw(packet[TCP])) == 0
+
+
+def assert_ipv6_tcp_checksum(packet):
+    assert in6_chksum(socket.IPPROTO_TCP, packet[IPv6], raw(packet[TCP])) == 0
 
 
 @pytest.mark.parametrize(
@@ -145,6 +159,75 @@ def test_generates_cartesian_ipv6_and_tcp_port_ranges(packet_program, capture_pa
         for ip in ["2001:db8::1", "2001:db8::2", "2001:db8::3", "2001:db8::4"]
         for port in [10000, 10001, 10002]
     }
+
+
+def test_generates_stepped_ipv4_and_tcp_port_ranges(packet_program, capture_packets):
+    program = packet_program(
+        f'{ETHER}/IP(src="10.0.0.1-10.0.0.6(step=2)",dst="10.0.1.1")/'
+        'TCP(sport="100-105(step=2)",dport=443,flags=2)',
+        packet_count=9,
+    )
+
+    packets = capture_packets(program, 9)
+    assert {(packet[IP].src, packet[TCP].sport) for packet in packets} == {
+        (f"10.0.0.{last}", sport)
+        for last in (1, 3, 5)
+        for sport in (100, 102, 104)
+    }
+    for packet in packets:
+        assert_ipv4_tcp_checksums(packet)
+
+
+def test_generates_stepped_ipv6_and_tcp_port_ranges(packet_program, capture_packets):
+    program = packet_program(
+        f'{ETHER}/IPv6(src="2001:db8::1-2001:db8::6(step=2)",dst="2001:db8::ff")/'
+        'TCP(sport="200-205(step=2)",dport=443,flags=2)',
+        packet_count=9,
+    )
+
+    packets = capture_packets(program, 9)
+    assert {(packet[IPv6].src, packet[TCP].sport) for packet in packets} == {
+        (f"2001:db8::{last:x}", sport)
+        for last in (1, 3, 5)
+        for sport in (200, 202, 204)
+    }
+    for packet in packets:
+        assert_ipv6_tcp_checksum(packet)
+
+
+def test_each_range_list_entry_uses_its_own_step(packet_program, capture_packets):
+    program = packet_program(
+        f'{ETHER}/IP(src="192.0.2.1",dst="192.0.2.2")/'
+        'TCP(sport="[1-5(step=2),10-12(step=100)]",dport=443,flags=2)',
+        packet_count=4,
+    )
+
+    packets = capture_packets(program, 4)
+    assert {packet[TCP].sport for packet in packets} == {1, 3, 5, 10}
+    for packet in packets:
+        assert_ipv4_tcp_checksums(packet)
+
+
+def test_generates_stepped_range_with_large_payload(packet_program, capture_packets):
+    program = packet_program(
+        f'{ETHER}/IP(src="198.51.100.1-198.51.100.8(step=2)",dst="198.51.100.100")/'
+        'TCP(sport="300-307(step=2)",dport=443,flags=2)/Payload(length=1200)',
+        packet_count=4,
+    )
+
+    result = capture_packets(program, 4, with_output=True)
+    assert {(packet[IP].src, packet[TCP].sport) for packet in result.packets} == {
+        ("198.51.100.1", 300),
+        ("198.51.100.3", 300),
+        ("198.51.100.5", 300),
+        ("198.51.100.7", 300),
+    }
+    assert "packet_len 1254 bytes" in result.stdout
+    assert "tx_errors 0" in result.stdout
+    for packet in result.packets:
+        assert len(packet) == 1254
+        assert len(bytes(packet[TCP].payload)) == 1200
+        assert_ipv4_tcp_checksums(packet)
 
 
 def test_clone_repeats_each_flow_before_advancing(packet_program, capture_packets):

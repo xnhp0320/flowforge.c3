@@ -114,6 +114,7 @@ def capture_runtime_packets(
 ):
     packets = []
     deadline = time.monotonic() + timeout
+    process_exited_at = None
     while len(packets) < expected_count and time.monotonic() < deadline:
         wait = min(0.1, max(0.0, deadline - time.monotonic()))
         readable, _, _ = select.select([capture], [], [], wait)
@@ -124,7 +125,11 @@ def capture_runtime_packets(
                 packets.append(packet)
 
         if process is not None and process.poll() is not None:
-            break
+            now = time.monotonic()
+            if process_exited_at is None:
+                process_exited_at = now
+            elif now - process_exited_at >= 0.25:
+                break
 
     return packets
 
