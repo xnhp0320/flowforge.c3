@@ -1,4 +1,4 @@
-module flowforge_runtime_dpdk_test;
+module flowforge_runtime_dpdk_test @feat(DPDK);
 import flowforge::runtime;
 import flowforge::dpdk;
 import flowforge::serializer;

@@ -94,18 +94,21 @@ struct IPv4Range {
 	IPv4 first;
 	IPv4 last;
 	Maybe{ulong} step;
+	bool random;
 }
 
 struct IPv6Range {
 	IPv6 first;
 	IPv6 last;
 	Maybe{ulong} step;
+	bool random;
 }
 
 struct UIntRange {
 	ulong first;
 	ulong last;
 	Maybe{ulong} step;
+	bool random;
 }
 
 enum ConstructorValueKind {
@@ -209,17 +212,20 @@ fn bool cv_equals(ConstructorValue a, ConstructorValue b) {
 				if (a.uint_ranges_val[i].first != b.uint_ranges_val[i].first) return false;
 				if (a.uint_ranges_val[i].last != b.uint_ranges_val[i].last) return false;
 				if (!range_step_equals(a.uint_ranges_val[i].step, b.uint_ranges_val[i].step)) return false;
+				if (a.uint_ranges_val[i].random != b.uint_ranges_val[i].random) return false;
 			}
 			return true;
 	}
 }
 
 fn bool ipv4_range_equals(IPv4Range a, IPv4Range b) {
-	return a.first.bytes == b.first.bytes && a.last.bytes == b.last.bytes && range_step_equals(a.step, b.step);
+	return a.first.bytes == b.first.bytes && a.last.bytes == b.last.bytes &&
+		range_step_equals(a.step, b.step) && a.random == b.random;
 }
 
 fn bool ipv6_range_equals(IPv6Range a, IPv6Range b) {
-	return a.first.bytes == b.first.bytes && a.last.bytes == b.last.bytes && range_step_equals(a.step, b.step);
+	return a.first.bytes == b.first.bytes && a.last.bytes == b.last.bytes &&
+		range_step_equals(a.step, b.step) && a.random == b.random;
 }
 
 fn bool range_step_equals(Maybe{ulong} a, Maybe{ulong} b) {

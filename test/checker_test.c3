@@ -441,6 +441,15 @@ fn void test_checker_accepts_per_range_steps_in_lists() @test {
 	assert(result.errors.len() == 0);
 }
 
+fn void test_checker_accepts_rand_for_all_explicit_range_types() @test {
+	Packet pkt = testutil::must_parse(
+		"IP(src=\"10.0.0.1-10.0.0.100(rand)\")/IPv6(src=\"2001:db8::1-2001:db8::ff(rand)\")/TCP(sport=\"1-100(rand)\")");
+	Checker checker = checker::checker_with_default();
+	CheckResult result = checker.check(pkt);
+	assert(result.ok);
+	assert(result.errors.len() == 0);
+}
+
 fn void test_checker_rejects_invalid_range_steps() @test {
 	String[] values = {
 		"1-10(step=0)",
@@ -451,6 +460,9 @@ fn void test_checker_rejects_invalid_range_steps() @test {
 		"1-10(step=2)(step=3)",
 		"1-10(step=2, step=3)",
 		"1-10(step=2, rand)",
+		"1-10(rand, step=2)",
+		"1-10(rand=1)",
+		"1-10(rand, rand)",
 		"1-10(step=18446744073709551616)",
 		"1(step=2)",
 	};

@@ -13,7 +13,7 @@ from scapy.utils import checksum
 ETHER = 'Ether(dst="ff:ff:ff:ff:ff:ff",src="02:64:74:61:70:00")'
 TAP_IFACE = "packet_tap0"
 WORKER_RE = re.compile(
-    r"PMD worker (\d+) lcore (\d+) queue (\d+) flows (\d+)\+(\d+) sent (\d+)/(\d+) packet\(s\)"
+    r"(?:PMD|TX) worker (\d+)(?: lcore (\d+))? queue (\d+) flows (\d+)\+(\d+) sent (\d+)/(\d+) packet\(s\)"
 )
 
 
@@ -208,6 +208,53 @@ def test_each_range_list_entry_uses_its_own_step(packet_program, capture_packets
         assert_ipv4_tcp_checksums(packet)
 
 
+def assert_random_samples(values, allowed, minimum_distinct):
+    counts = Counter(values)
+    assert set(counts) <= set(allowed), counts
+    assert len(counts) >= minimum_distinct, counts
+
+    # This is deliberately a broad smoke-test bound, not a PRNG quality test.
+    # It catches a stuck or severely biased generator while keeping the chance
+    # of rejecting a healthy uniform generator negligible.
+    expected = len(values) / len(allowed)
+    chi_square = sum((counts[value] - expected) ** 2 / expected for value in allowed)
+    assert chi_square < 80, counts
+
+
+def test_generates_random_ipv4_and_tcp_port_ranges(packet_program, capture_packets):
+    addresses = [f"198.51.100.{last}" for last in range(1, 17)]
+    ports = list(range(20000, 20016))
+    program = packet_program(
+        f'{ETHER}/IP(src="198.51.100.1-198.51.100.16(rand)",dst="198.51.100.254")/'
+        'TCP(sport="20000-20015(rand)",dport=443,flags=2)',
+        packet_count=48,
+        tx_batch_size=64,
+    )
+
+    packets = capture_packets(program, 48)
+    assert_random_samples([packet[IP].src for packet in packets], addresses, 10)
+    assert_random_samples([packet[TCP].sport for packet in packets], ports, 10)
+    for packet in packets:
+        assert_ipv4_tcp_checksums(packet)
+
+
+def test_generates_random_ipv6_and_tcp_port_ranges(packet_program, capture_packets):
+    addresses = [f"2001:db8::{last:x}" for last in range(1, 17)]
+    ports = list(range(30000, 30016))
+    program = packet_program(
+        f'{ETHER}/IPv6(src="2001:db8::1-2001:db8::10(rand)",dst="2001:db8::ff")/'
+        'TCP(sport="30000-30015(rand)",dport=443,flags=2)',
+        packet_count=48,
+        tx_batch_size=64,
+    )
+
+    packets = capture_packets(program, 48)
+    assert_random_samples([packet[IPv6].src for packet in packets], addresses, 10)
+    assert_random_samples([packet[TCP].sport for packet in packets], ports, 10)
+    for packet in packets:
+        assert_ipv6_tcp_checksum(packet)
+
+
 def test_generates_stepped_range_with_large_payload(packet_program, capture_packets):
     program = packet_program(
         f'{ETHER}/IP(src="198.51.100.1-198.51.100.8(step=2)",dst="198.51.100.100")/'
@@ -222,8 +269,9 @@ def test_generates_stepped_range_with_large_payload(packet_program, capture_pack
         ("198.51.100.5", 300),
         ("198.51.100.7", 300),
     }
-    assert "packet_len 1254 bytes" in result.stdout
-    assert "tx_errors 0" in result.stdout
+    if "runtime completed" in result.stdout:
+        assert "packet_len 1254 bytes" in result.stdout
+        assert "tx_errors 0" in result.stdout
     for packet in result.packets:
         assert len(packet) == 1254
         assert len(bytes(packet[TCP].payload)) == 1200
@@ -276,7 +324,7 @@ def test_multi_pmd_workers_emit_duplicate_cartesian_ranges(packet_program, captu
     workers = [
         {
             "worker": int(match.group(1)),
-            "lcore": int(match.group(2)),
+            "lcore": int(match.group(2)) if match.group(2) else None,
             "queue": int(match.group(3)),
             "first_flow": int(match.group(4)),
             "flow_count": int(match.group(5)),

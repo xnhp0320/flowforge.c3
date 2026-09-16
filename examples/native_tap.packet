@@ -1,0 +1,7 @@
+# Uncomment one backend configuration at a time.
+BACKEND: "tap"
+INTERFACE: "packet_tap0"
+# BACKEND: "dpdk"
+# DPDK_ARGS: "--no-huge --no-pci -l 0"
+PACKET_COUNT: 4
+PACKET: Ether(dst="ff:ff:ff:ff:ff:ff",src="02:64:74:61:70:00")/IP(src="192.0.2.1-192.0.2.4",dst="192.0.2.100")/UDP(sport=1234,dport=5678)

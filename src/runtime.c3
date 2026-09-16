@@ -43,6 +43,7 @@ struct RunOptions {
 
 struct Result {
 	bool ok;
+	String backend;
 	List{String} warnings;
 	List{String} errors;
 	int eal_parsed_args;
@@ -75,6 +76,8 @@ fn void Result.tinit(&self) {
 }
 
 struct Config {
+	String backend;
+	String interface_name;
 	bool has_packet;
 	Packet packet;
 	String[] dpdk_args;
@@ -188,14 +191,48 @@ fn Config? build_config(Program program, Result* result, RunOptions options) {
 		result.errors.push("missing mandatory variable 'PACKET'");
 	}
 
-	Variable*? dpdk_args_var = variables.get("DPDK_ARGS");
-	if (catch dpdk_args_var) {
-		result.errors.push("missing mandatory variable 'DPDK_ARGS'");
-	}
-
 	if (result.errors.len()) return BUILD_ERR~;
 
 	Config config = { .tx_batch_size = 32 };
+	Variable*? backend_var = variables.get("BACKEND");
+	if (try backend_var) {
+		ScalarValue? backend = ast::evaluate(backend_var.expression);
+		if (catch backend) {
+			result.errors.push("variable 'BACKEND' must be a string expression");
+			return BUILD_ERR~;
+		}
+		if (backend.kind != ScalarKind.STRING) {
+			result.errors.push("variable 'BACKEND' must be a string expression");
+			return BUILD_ERR~;
+		}
+		config.backend = backend.string_val;
+	} else if (variables.has_key("DPDK_ARGS")) {
+		config.backend = "dpdk";
+		result.warnings.push("implicit DPDK backend is deprecated; declare BACKEND: \"dpdk\"");
+	}
+	if (config.backend != "tap" && config.backend != "dpdk") {
+		result.errors.push("BACKEND must be 'tap' or 'dpdk'");
+		return BUILD_ERR~;
+	}
+	result.backend = config.backend;
+	if (config.backend == "tap") {
+		Variable*? iface = variables.get("INTERFACE");
+		if (catch iface) {
+			result.errors.push("missing mandatory variable 'INTERFACE'");
+			return BUILD_ERR~;
+		}
+		ScalarValue? name = ast::evaluate(iface.expression);
+		if (catch name) {
+			result.errors.push("variable 'INTERFACE' must be a string expression");
+			return BUILD_ERR~;
+		}
+		if (name.kind != ScalarKind.STRING || !valid_tap_interface(name.string_val)) {
+			result.errors.push("INTERFACE must be a nonempty interface name shorter than 16 bytes");
+			return BUILD_ERR~;
+		}
+		config.interface_name = name.string_val;
+		if (options.mempool_seed_dump_file.has_value) result.errors.push("--dump-mempool-seed requires the dpdk backend");
+	}
 
 	if (has_packet_var) {
 		ScalarValue? packet_value = ast::evaluate(packet_var.expression);
@@ -209,20 +246,26 @@ fn Config? build_config(Program program, Result* result, RunOptions options) {
 		}
 	}
 
-	ScalarValue? dpdk_args_value = ast::evaluate(dpdk_args_var.expression);
-	if (catch dpdk_args_value) {
-		result.errors.push("variable 'DPDK_ARGS' must be a string expression");
-	} else if (dpdk_args_value.kind != ScalarKind.STRING) {
-		result.errors.push("variable 'DPDK_ARGS' must be a string expression");
-	} else {
-		result::Result{String[], String} args = split_dpdk_args(dpdk_args_value.string_val);
-		if (!args.is_ok) {
-			result.errors.push(args.error);
+	if (config.backend == "dpdk") {
+		Variable*? dpdk_args_var = variables.get("DPDK_ARGS");
+		if (catch dpdk_args_var) {
+			result.errors.push("missing mandatory variable 'DPDK_ARGS'");
+			return BUILD_ERR~;
+		}
+		ScalarValue? dpdk_args_value = ast::evaluate(dpdk_args_var.expression);
+		if (catch dpdk_args_value) {
+			result.errors.push("variable 'DPDK_ARGS' must be a string expression");
+		} else if (dpdk_args_value.kind != ScalarKind.STRING) {
+			result.errors.push("variable 'DPDK_ARGS' must be a string expression");
 		} else {
-			config.dpdk_args = args.value;
+			result::Result{String[], String} args = split_dpdk_args(dpdk_args_value.string_val);
+			if (!args.is_ok) {
+				result.errors.push(args.error);
+			} else {
+				config.dpdk_args = args.value;
+			}
 		}
 	}
-
 	Variable*? packet_count_var = variables.get("PACKET_COUNT");
 	if (try packet_count_var) {
 		ulong? count = positive_integer_var(packet_count_var, "PACKET_COUNT", &result.errors);
@@ -266,7 +309,7 @@ fn Config? build_config(Program program, Result* result, RunOptions options) {
 	}
 
 	foreach (variable : program.variables) {
-		if (variable.name != "PACKET" && variable.name != "DPDK_ARGS" &&
+		if (variable.name != "BACKEND" && variable.name != "INTERFACE" && variable.name != "PACKET" && variable.name != "DPDK_ARGS" &&
 			variable.name != "PACKET_COUNT" && variable.name != "PMD_THREADS" &&
 			variable.name != "RX_THREADS" && variable.name != "TX_BATCH_SIZE") {
 			result.warnings.push(string::tformat("unknown runtime variable '%s'", variable.name));
@@ -314,16 +357,17 @@ fn Result Runtime.check(&self, Program program, RunOptions options = default_run
 	if (catch config) return result;
 
 	if (options.capture) {
-		result.pmd_threads = config.pmd_threads.has_value ? config.pmd_threads.value : 1;
-		result.rx_threads = config.rx_threads.has_value ? config.rx_threads.value : 0;
+		result.pmd_threads = config.backend == "tap" ? 0 : (config.pmd_threads.has_value ? config.pmd_threads.value : 1);
+		result.rx_threads = config.rx_threads.has_value ? config.rx_threads.value : (config.backend == "tap" ? 1ul : 0ul);
 		result.tx_batch_size = config.tx_batch_size;
+		if (config.backend == "tap" && !validate_tap_workers(result.pmd_threads, result.rx_threads, options, &result.errors)) return result;
 		result.ok = true;
 		return result;
 	}
 
 	PacketGenerator generator = { .registry = self.registry };
 	generator::MaybeCount count = config.packet_count;
-	PacketGenerationResult generated = generator.prepare(config.packet, count, live_fixup_options());
+	PacketGenerationResult generated = generator.prepare(config.packet, count, config.backend == "dpdk" ? live_fixup_options() : (FixupOptions){});
 
 	append_strings(&result.warnings, generated.warnings);
 	append_strings(&result.errors, generated.errors);
@@ -341,6 +385,10 @@ fn Result Runtime.check(&self, Program program, RunOptions options = default_run
 	result.once = options.once;
 	result.planned_transmissions = checked_total_transmission_count(
 		result.planned_packets, result.pmd_threads, options, &result);
+	if (config.backend == "tap") {
+		if (config.packet.len() == 0 || config.packet[0].protocol != "Ether") result.errors.push("TAP requires an Ethernet frame starting with Ether()");
+		(void)validate_tap_workers(result.pmd_threads, result.rx_threads, options, &result.errors);
+	}
 	if (result.errors.len()) return result;
 	result.ok = true;
 	return result;

@@ -109,6 +109,7 @@ struct ParsedRangeModifier {
 
 struct RangeModifierOptions {
 	Maybe{ulong} step;
+	bool random;
 }
 
 fn Result{ParsedRangeModifier, String} parse_range_modifier(String raw) {
@@ -156,15 +157,23 @@ fn Result{ParsedRangeModifier, String} parse_range_modifier(String raw) {
 		start = (usz)comma + 1;
 	}
 	String range = s[..(usz)open - 1].trim();
-	if (!range.len) return result::err("range step requires an explicit start-end range");
+	if (!range.len) return result::err("range modifier requires an explicit start-end range");
 	return result::ok({ .range = range, .attributes = attributes.to_tarray() });
 }
 
 fn Result{RangeModifierOptions, String} parse_range_modifier_options(RangeModifierAttribute[] attributes) {
 	RangeModifierOptions options;
 	foreach (attribute : attributes) {
+		if (attribute.name == "rand") {
+			if (options.random) return result::err("duplicate range modifier 'rand'");
+			if (attribute.value.has_value) return result::err("range rand modifier does not accept a value");
+			if (options.step.has_value) return result::err("range modifiers 'step' and 'rand' are mutually exclusive");
+			options.random = true;
+			continue;
+		}
 		if (attribute.name != "step") return result::err(string::tformat("unknown range modifier '%s'", attribute.name));
 		if (options.step.has_value) return result::err("duplicate range modifier attribute 'step'");
+		if (options.random) return result::err("range modifiers 'step' and 'rand' are mutually exclusive");
 		if (!attribute.value.has_value || !attribute.value.value.len) {
 			return result::err("range step must be a decimal positive integer");
 		}
@@ -195,7 +204,12 @@ fn Result{UIntRange, String} parse_uint_range(String raw, usz bit_width) {
 		if (left.value > right.value) {
 			return result::err(string::tformat("range start %d is greater than range end %d", left.value, right.value));
 		}
-		return result::ok({ .first = left.value, .last = right.value, .step = options.value.step });
+		return result::ok({
+			.first = left.value,
+			.last = right.value,
+			.step = options.value.step,
+			.random = options.value.random,
+		});
 	}
 	if (parsed.value.attributes.len) return result::err("range step requires an explicit start-end range");
 	Result{ulong, String} v = parse_uint_value(s, bit_width);
@@ -323,7 +337,12 @@ fn Result{IPv4Range, String} parse_ipv4_range(String raw) {
 		IPv4? right = value::ipv4_parse(right_str);
 		if (catch right) return result::err(string::tformat("invalid ipv4 address '%s'", right_str));
 		if (ipv4_to_u32(left) > ipv4_to_u32(right)) return result::err("ipv4 range start is greater than range end");
-		return result::ok({ .first = left, .last = right, .step = options.value.step });
+		return result::ok({
+			.first = left,
+			.last = right,
+			.step = options.value.step,
+			.random = options.value.random,
+		});
 	}
 	if (parsed.value.attributes.len) return result::err("range modifiers require an explicit start-end range");
 	IPv4? ip = value::ipv4_parse(s);
@@ -364,7 +383,12 @@ fn Result{IPv6Range, String} parse_ipv6_range(String raw) {
 		IPv6? right = value::ipv6_parse(right_str);
 		if (catch right) return result::err(string::tformat("invalid ipv6 address '%s'", right_str));
 		if (ipv6_to_u128(left) > ipv6_to_u128(right)) return result::err("ipv6 range start is greater than range end");
-		return result::ok({ .first = left, .last = right, .step = options.value.step });
+		return result::ok({
+			.first = left,
+			.last = right,
+			.step = options.value.step,
+			.random = options.value.random,
+		});
 	}
 	if (parsed.value.attributes.len) return result::err("range modifiers require an explicit start-end range");
 	IPv6? ip = value::ipv6_parse(s);

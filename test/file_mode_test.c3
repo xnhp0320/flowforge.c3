@@ -107,6 +107,27 @@ fn void test_generator_expands_stepped_cartesian_ranges() @test {
 	assert(errors.len() == 0);
 }
 
+fn void test_generator_randomizes_ranges_and_keeps_checksums_valid() @test {
+	Registry reg = registry::create_default_registry();
+	PacketGenerator gen = { .registry = &reg };
+	PacketGenerationResult result = gen.prepare(
+		testutil::must_parse(`IP(src="10.0.0.10-10.0.0.19(rand)",dst="10.0.1.1")/UDP(sport="100-109(rand)",dport=53)`));
+	assert(result.ok);
+	assert(result.packet.flow_plan.total_flows == 100);
+	List{String} errors;
+	errors.tinit();
+	for (ulong flow = 0; flow < 20; flow++) {
+		char[] payload = result.packet.payload_for_flow(flow, tmem, &errors)!!;
+		assert(payload[15] >= 10 && payload[15] <= 19);
+		ushort sport = (ushort)payload[20] << 8 | (ushort)payload[21];
+		assert(sport >= 100 && sport <= 109);
+		assert(serializer::fold_checksum(serializer::checksum_sum(payload[..20])) == 0xffff);
+		uint pseudo = serializer::ipv4_pseudo_sum(payload, 0, (char)17, (ushort)8);
+		assert(serializer::fold_checksum(pseudo + serializer::checksum_sum(payload[20:8])) == 0xffff);
+	}
+	assert(errors.len() == 0);
+}
+
 fn void test_generator_applies_flow_into_prefilled_buffer_repeatedly() @test {
 	Registry reg = registry::create_default_registry();
 	PacketGenerator gen = { .registry = &reg };
