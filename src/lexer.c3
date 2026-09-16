@@ -26,11 +26,20 @@ fn String lexeme_range(String source, usz start, usz end_exclusive) {
 	return source[start..end_exclusive - 1];
 }
 
-fn void Lexer.skip_whitespace(&self) {
+fn void Lexer.skip_trivia(&self) {
 	while (self.pos < self.source.len) {
 		char c = self.source[self.pos];
-		if (!c.is_space()) break;
-		self.pos++;
+		if (c.is_space()) {
+			self.pos++;
+			continue;
+		}
+		if (c == '#') {
+			while (self.pos < self.source.len && self.source[self.pos] != '\n') {
+				self.pos++;
+			}
+			continue;
+		}
+		break;
 	}
 }
 
@@ -111,7 +120,7 @@ fn Result{Token, String} Lexer.lex_symbol(&self) {
 }
 
 fn Result{Token, String} Lexer.next(&self) {
-	self.skip_whitespace();
+	self.skip_trivia();
 	if (self.pos >= self.source.len) {
 		self.current = { .type = TokenType.END_OF_FILE, .lexeme = self.source[self.source.len..], .position = self.source.len };
 		return result::ok(self.current);

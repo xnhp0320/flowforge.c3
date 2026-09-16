@@ -213,6 +213,27 @@ fn void test_parser_program_with_variables() @test {
 	assert(src.string_val == "192.168.0.1");
 }
 
+fn void test_parser_program_with_hash_comments() @test {
+	Parser p;
+	p.init(`# packet configuration
+PACKET_COUNT: 1 # one packet
+
+# The hash inside the payload is string data.
+PACKET: Ether()/Raw(data="payload #1") # packet expression
+`);
+	Program program = p.parse().ok()!!;
+	assert(program.variables.len() == 2);
+	assert(program.variables[0].name == "PACKET_COUNT");
+	assert(program.variables[1].name == "PACKET");
+
+	ScalarValue value = ast::evaluate(program.variables[1].expression)!!;
+	assert(value.kind == ScalarKind.PACKET);
+	assert(value.packet_val.len() == 2);
+	ScalarValue data = ast::attr_scalar(&value.packet_val[1].attributes[0])!!;
+	assert(data.kind == ScalarKind.STRING);
+	assert(data.string_val == "payload #1");
+}
+
 fn void test_parser_invalid_input() @test {
 	Parser p;
 	p.init("Ether(dst=\"unclosed)");

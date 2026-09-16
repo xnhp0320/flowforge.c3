@@ -214,3 +214,37 @@ fn void test_lexer_unterminated_string() @test {
 	assert(!tok.is_ok);
 	assert(tok.error == "unterminated string literal");
 }
+
+fn void test_lexer_hash_comments() @test {
+	Lexer lexer;
+	lexer.init("# file comment\nEther # header comment\n/ # separator comment\nIP# comment at EOF");
+
+	Token t = lexer.next().ok()!!;
+	assert(t.type == TokenType.IDENTIFIER);
+	assert(t.lexeme == "Ether");
+
+	t = lexer.next().ok()!!;
+	assert(t.type == TokenType.SLASH);
+
+	t = lexer.next().ok()!!;
+	assert(t.type == TokenType.IDENTIFIER);
+	assert(t.lexeme == "IP");
+
+	t = lexer.next().ok()!!;
+	assert(t.type == TokenType.END_OF_FILE);
+}
+
+fn void test_lexer_hash_in_string_is_not_a_comment() @test {
+	Lexer lexer;
+	lexer.init("Raw(data=\"value #1\") # trailing comment");
+
+	Token t;
+	do {
+		t = lexer.next().ok()!!;
+	} while (t.type != TokenType.STRING_LITERAL);
+
+	assert(t.lexeme == "\"value #1\"");
+	while (t.type != TokenType.END_OF_FILE) {
+		t = lexer.next().ok()!!;
+	}
+}
