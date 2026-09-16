@@ -29,6 +29,7 @@ class RuntimeCapture:
 
 
 def pytest_addoption(parser):
+    parser.addoption("--backend", choices=["tap", "dpdk", "pcap"], default="tap", help="Test transport (not a runtime CLI option).")
     parser.addoption(
         "--runtime",
         default=os.environ.get("FFG_RUNTIME") or os.environ.get("PACKET_TAP_RUNTIME"),
@@ -48,17 +49,19 @@ def runtime_binary(pytestconfig):
 
 
 @pytest.fixture(autouse=True)
-def require_tap_host(runtime_binary):
+def require_tap_host(runtime_binary, pytestconfig):
+    if pytestconfig.getoption("--backend") == "pcap":
+        return
     if platform.system() != "Linux":
-        pytest.skip("DPDK tap e2e tests require Linux")
+        pytest.skip("live TAP e2e tests require Linux")
     if not Path("/dev/net/tun").exists():
         pytest.skip("/dev/net/tun is not available")
     if hasattr(os, "geteuid") and os.geteuid() != 0:
-        pytest.skip("DPDK tap e2e tests require root or equivalent network capabilities")
+        pytest.skip("live TAP e2e tests require root or equivalent network capabilities")
 
 
 @pytest.fixture
-def packet_program(tmp_path):
+def packet_program(tmp_path, pytestconfig):
     def write_program(
         packet: str,
         *,
@@ -67,7 +70,7 @@ def packet_program(tmp_path):
         pmd_threads: Optional[int] = None,
         tx_batch_size: Optional[int] = None,
     ) -> Path:
-        lines = [f'DPDK_ARGS: "{dpdk_args}"']
+        lines = ([f'BACKEND: "dpdk"', f'DPDK_ARGS: "{dpdk_args}"'] if pytestconfig.getoption("--backend") == "dpdk" else ['BACKEND: "tap"', f'INTERFACE: "{TAP_IFACE}"'])
         if packet_count is not None:
             lines.append(f"PACKET_COUNT: {packet_count}")
         if pmd_threads is not None:
@@ -84,11 +87,8 @@ def packet_program(tmp_path):
 
 def permission_error(output: str) -> bool:
     markers = [
-        "/dev/net/tun",
-        "TUNSETIFF",
         "Operation not permitted",
         "Permission denied",
-        "failed to create TAP",
     ]
     return any(marker in output for marker in markers)
 
@@ -135,7 +135,7 @@ def capture_runtime_packets(
 
 
 @pytest.fixture
-def capture_packets(runtime_binary):
+def capture_packets(runtime_binary, pytestconfig, tmp_path):
     def run(
         program: Path,
         expected_count: int,
@@ -144,6 +144,17 @@ def capture_packets(runtime_binary):
         with_output: bool = False,
         runtime_args: Optional[list] = None,
     ):
+        if pytestconfig.getoption("--backend") == "pcap":
+            if runtime_args or "PMD_THREADS:" in program.read_text():
+                pytest.skip("runtime scheduling is covered by TAP and cursor unit tests")
+            output = tmp_path / "generated.pcap"
+            proc = subprocess.run([str(runtime_binary), str(program), "-w", str(output)], capture_output=True, text=True, timeout=timeout)
+            assert proc.returncode == 0, proc.stdout + proc.stderr
+            packets = list(scapy.rdpcap(str(output)))
+            assert len(packets) == expected_count
+            if with_output:
+                return RuntimeCapture(packets, proc.stdout, proc.stderr)
+            return packets
         args = [str(runtime_binary), str(program), "--once"]
         if runtime_args:
             args.extend(runtime_args)
@@ -190,7 +201,9 @@ class CaptureResult:
 
 
 @pytest.fixture
-def run_capture_mode(runtime_binary, tmp_path):
+def run_capture_mode(runtime_binary, tmp_path, pytestconfig):
+    if pytestconfig.getoption("--backend") == "pcap":
+        pytest.skip("capture requires live TAP")
     def run(
         *,
         dpdk_args: str = DEFAULT_DPDK_ARGS,
@@ -198,7 +211,7 @@ def run_capture_mode(runtime_binary, tmp_path):
         injector,
         timeout: float = 8.0,
     ):
-        lines = [f'DPDK_ARGS: "{dpdk_args}"']
+        lines = ([f'BACKEND: "dpdk"', f'DPDK_ARGS: "{dpdk_args}"'] if pytestconfig.getoption("--backend") == "dpdk" else ['BACKEND: "tap"', f'INTERFACE: "{TAP_IFACE}"'])
         program = tmp_path / "capture.packet"
         program.write_text("\n".join(lines) + "\n", encoding="utf-8")
 

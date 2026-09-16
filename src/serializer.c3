@@ -6,6 +6,7 @@ import flowforge::value;
 import std::collections::list;
 import std::collections::maybe;
 import std::collections::result;
+import std::math::random;
 
 faultdef SERIALIZE_ERR, NO_MODIFIER, OUT_OF_RANGE, HEADER_NOT_FOUND;
 
@@ -30,6 +31,7 @@ enum ModifierPatchKind {
 enum RangeTraversalKind {
 	SEQUENTIAL,
 	STRIDED,
+	RANDOM,
 }
 
 struct RangeTraversal {
@@ -69,7 +71,6 @@ struct PayloadFieldModifier {
 	ulong value_count;
 	ModifierValueKind values_kind;
 	ModifierPatchKind patch_kind;
-	bool has_custom_traversal;
 	union {
 		UIntPatchRange[] uint_ranges;
 		IPv4PatchRange[] ipv4_ranges;
@@ -252,7 +253,8 @@ fn ulong gcd_u128_ulong(uint128 left, ulong right) {
 	return (ulong)a;
 }
 
-fn RangeTraversal make_range_traversal(uint128 length, bool full_domain, Maybe{ulong} requested_step) {
+fn RangeTraversal make_range_traversal(uint128 length, bool full_domain, Maybe{ulong} requested_step, bool requested_random) {
+	if (requested_random) return { .kind = RangeTraversalKind.RANDOM };
 	ulong step = range_step(requested_step);
 	if (step == 1) return { .kind = RangeTraversalKind.SEQUENTIAL };
 	ulong cycle_length = ulong::max;
@@ -265,6 +267,46 @@ fn RangeTraversal make_range_traversal(uint128 length, bool full_domain, Maybe{u
 		.step = step,
 		.cycle_length = cycle_length,
 	};
+}
+
+<* DPDK's generator is already per-lcore. The stdlib fallback uses the same
+   thread-local SFC64 generator that backs random::rnd(), but reads all 64 bits
+   directly instead of converting through rnd()'s 53-bit double result. *>
+
+tlocal random::Sfc64Random range_random_state @private @feat(!DPDK);
+tlocal bool range_random_initialized @private @feat(!DPDK);
+
+fn ulong range_random_u64() @private @feat(!DPDK) {
+	if (!range_random_initialized) {
+		random::seed_entropy(&range_random_state);
+		range_random_initialized = true;
+	}
+	return range_random_state.next_long();
+}
+
+fn ulong random_below_u64(ulong upper_bound) {
+	if (upper_bound == 0) return range_random_u64();
+	if (upper_bound == 1) return 0;
+	ulong mask = ulong::max >> (upper_bound - 1).clz();
+	while (true) {
+		ulong candidate = range_random_u64() & mask;
+		if (candidate < upper_bound) return candidate;
+	}
+}
+
+fn uint128 random_below_u128(uint128 upper_bound, bool full_domain) {
+	if (full_domain) {
+		return (uint128)range_random_u64() << 64 | (uint128)range_random_u64();
+	}
+	if (upper_bound <= (uint128)ulong::max) {
+		return (uint128)random_below_u64((ulong)upper_bound);
+	}
+	if (upper_bound == (uint128)ulong::max + 1) return (uint128)range_random_u64();
+	uint128 threshold = ((uint128)0 - upper_bound) % upper_bound;
+	while (true) {
+		uint128 candidate = (uint128)range_random_u64() << 64 | (uint128)range_random_u64();
+		if (candidate >= threshold) return candidate % upper_bound;
+	}
 }
 
 fn ulong total_uint_patch_count(UIntPatchRange[] ranges) {
@@ -324,19 +366,6 @@ fn Ipv6RangeAt? ipv6_range_at_index(IPv6PatchRange[] ranges, ulong value_index) 
 	return OUT_OF_RANGE~;
 }
 
-fn IPv6 add_ipv6_offset(IPv6 ip, ulong offset) {
-	char[16] bytes = ip.bytes;
-	ushort carry = 0;
-	for (usz index = 16; index > 0; index--) {
-		usz shift = (16 - index) * 8;
-		ushort addend = shift < 64 ? (ushort)((offset >> shift) & 0xff) : 0;
-		ushort sum = (ushort)((ushort)bytes[index - 1] + addend + carry);
-		bytes[index - 1] = (char)(sum & 0xff);
-		carry = (ushort)(sum >> 8);
-	}
-	return value::ipv6_from_bytes(bytes);
-}
-
 fn uint128 range_traversal_offset(ulong index, uint128 length, bool full_domain, RangeTraversal traversal) {
 	switch (traversal.kind) {
 		case SEQUENTIAL:
@@ -346,10 +375,12 @@ fn uint128 range_traversal_offset(ulong index, uint128 length, bool full_domain,
 			ulong position = index % traversal.cycle_length;
 			uint128 offset = (uint128)group + (uint128)position * (uint128)traversal.step;
 			return full_domain ? offset : offset % length;
+		case RANDOM:
+			return random_below_u128(length, full_domain);
 	}
 }
 
-fn IPv6 add_ipv6_strided_offset(IPv6 ip, ulong index, IPv6PatchRange range) {
+fn IPv6 add_ipv6_traversal_offset(IPv6 ip, ulong index, IPv6PatchRange range) {
 	uint128 offset = range_traversal_offset(index, range.length, range.full_domain, range.traversal);
 	uint128 value = cvalue::ipv6_to_u128(ip) + offset;
 	return cvalue::ipv6_from_u128(value);
@@ -394,7 +425,9 @@ fn void write_modifier_value(PayloadFieldModifier* modifier, char[] payload, ulo
 	}
 }
 
-fn Result{bool, String} PayloadFieldModifier.apply(&self, char[] payload, ulong value_index) {
+<* Returns the actual value written, including the sampled value for random
+   traversal. IPv6 addresses use their network-order numeric representation. *>
+fn Result{uint128, String} PayloadFieldModifier.apply(&self, char[] payload, ulong value_index) {
 	if (self.bit_width > usz::max - self.bit_offset || (self.bit_offset + self.bit_width + 7) / 8 > payload.len) {
 		return result::err(string::tformat("payload is too small for modifier '%s.%s'", self.protocol, self.field));
 	}
@@ -405,40 +438,27 @@ fn Result{bool, String} PayloadFieldModifier.apply(&self, char[] payload, ulong 
 			if (catch found) {
 				return result::err(string::tformat("value index %d is out of range for modifier '%s.%s'", value_index, self.protocol, self.field));
 			}
-			if (!self.has_custom_traversal) {
-				write_modifier_value(self, payload, found.range.first + found.offset);
-				return result::ok(true);
-			}
 			uint128 offset = range_traversal_offset(found.offset, found.range.length, false, found.range.traversal);
-			write_modifier_value(self, payload, found.range.first + (ulong)offset);
-			return result::ok(true);
+			ulong applied_value = found.range.first + (ulong)offset;
+			write_modifier_value(self, payload, applied_value);
+			return result::ok((uint128)applied_value);
 		case IPV4_RANGES:
 			Ipv4RangeAt? found = ipv4_range_at_index(self.ipv4_ranges, value_index);
 			if (catch found) {
 				return result::err(string::tformat("value index %d is out of range for modifier '%s.%s'", value_index, self.protocol, self.field));
 			}
-			if (!self.has_custom_traversal) {
-				write_modifier_value(self, payload, (ulong)(found.range.first + (uint)found.offset));
-				return result::ok(true);
-			}
 			uint128 offset = range_traversal_offset(found.offset, found.range.length, false, found.range.traversal);
-			write_modifier_value(self, payload, (ulong)(found.range.first + (uint)offset));
-			return result::ok(true);
+			uint applied_value = found.range.first + (uint)offset;
+			write_modifier_value(self, payload, (ulong)applied_value);
+			return result::ok((uint128)applied_value);
 		case IPV6_RANGES:
 			Ipv6RangeAt? found = ipv6_range_at_index(self.ipv6_ranges, value_index);
 			if (catch found) {
 				return result::err(string::tformat("value index %d is out of range for modifier '%s.%s'", value_index, self.protocol, self.field));
 			}
-			if (!self.has_custom_traversal) {
-				IPv6 ip = add_ipv6_offset(found.range.first, found.offset);
-				write_modifier_value(self, payload, 0, ip);
-				return result::ok(true);
-			}
-			IPv6 ip = found.range.traversal.kind == RangeTraversalKind.SEQUENTIAL
-				? add_ipv6_offset(found.range.first, found.offset)
-				: add_ipv6_strided_offset(found.range.first, found.offset, found.range);
+			IPv6 ip = add_ipv6_traversal_offset(found.range.first, found.offset, found.range);
 			write_modifier_value(self, payload, 0, ip);
-			return result::ok(true);
+			return result::ok(cvalue::ipv6_to_u128(ip));
 	}
 }
 
@@ -449,19 +469,15 @@ fn uint ipv4_replace_delta(uint old_value, uint new_value) {
 		(uint)(~old_value & 0xffff);
 }
 
-fn uint? PayloadFieldModifier.ipv4_pseudo_delta(&self, PacketFixupPlan plan, ulong value_index) {
+<* Computes the change from the base IPv4 address using the value returned by
+   apply(). Never samples random traversal again or reads the packet buffer. *>
+fn uint PayloadFieldModifier.ipv4_pseudo_delta(&self, PacketFixupPlan plan, uint128 applied_value) {
 	if (self.patch_kind != ModifierPatchKind.IPV4) return 0;
 	if (!plan.ipv4.has_value) return 0;
 	usz ip_offset = plan.ipv4.value.offset;
 	if (self.byte_offset != ip_offset + 12 && self.byte_offset != ip_offset + 16) return 0;
 
-	Ipv4RangeAt? found = ipv4_range_at_index(self.ipv4_ranges, value_index);
-	if (catch found) return OUT_OF_RANGE~;
-	if (!self.has_custom_traversal) {
-		return ipv4_replace_delta(self.ipv4_ranges[0].first, found.range.first + (uint)found.offset);
-	}
-	uint128 offset = range_traversal_offset(found.offset, found.range.length, false, found.range.traversal);
-	return ipv4_replace_delta(self.ipv4_ranges[0].first, found.range.first + (uint)offset);
+	return ipv4_replace_delta(self.ipv4_ranges[0].first, (uint)applied_value);
 }
 
 fn UIntPatchRange[] make_uint_patch_ranges(UIntRange[] src) {
@@ -472,7 +488,7 @@ fn UIntPatchRange[] make_uint_patch_ranges(UIntRange[] src) {
 			.first = r.first,
 			.count = saturated_u128_count(length),
 			.length = length,
-			.traversal = make_range_traversal(length, false, r.step),
+			.traversal = make_range_traversal(length, false, r.step, r.random),
 		};
 	}
 	return dst;
@@ -487,7 +503,7 @@ fn IPv4PatchRange[] make_ipv4_patch_ranges(IPv4Range[] src) {
 			.first = cvalue::ipv4_to_u32(r.first),
 			.count = (ulong)length,
 			.length = length,
-			.traversal = make_range_traversal(length, false, r.step),
+			.traversal = make_range_traversal(length, false, r.step, r.random),
 		};
 	}
 	return dst;
@@ -504,25 +520,10 @@ fn IPv6PatchRange[] make_ipv6_patch_ranges(IPv6Range[] src) {
 			.count = full_domain ? ulong::max : saturated_u128_count(length),
 			.length = length,
 			.full_domain = full_domain,
-			.traversal = make_range_traversal(length, full_domain, r.step),
+			.traversal = make_range_traversal(length, full_domain, r.step, r.random),
 		};
 	}
 	return dst;
-}
-
-fn bool uint_ranges_have_custom_traversal(UIntRange[] ranges) {
-	foreach (range : ranges) if (range_step(range.step) > 1) return true;
-	return false;
-}
-
-fn bool ipv4_ranges_have_custom_traversal(IPv4Range[] ranges) {
-	foreach (range : ranges) if (range_step(range.step) > 1) return true;
-	return false;
-}
-
-fn bool ipv6_ranges_have_custom_traversal(IPv6Range[] ranges) {
-	foreach (range : ranges) if (range_step(range.step) > 1) return true;
-	return false;
 }
 
 // --- packet layout helpers (mirrors constructor.c3's own local layout
@@ -666,7 +667,6 @@ fn PayloadFieldModifier? make_modifier(HeaderConstructor header, FieldSpec* spec
 			ulong count = patch_ranges[0].count;
 			if (count <= 1) return NO_MODIFIER~;
 			modifier.values_kind = ModifierValueKind.IPV4_RANGES;
-			modifier.has_custom_traversal = range_step(field.value.ipv4_range_val.step) > 1;
 			modifier.patch_kind = patch_kind_for(modifier.values_kind, bit_offset, spec.bit_width);
 			modifier.ipv4_ranges = patch_ranges;
 			modifier.value_count = count;
@@ -678,7 +678,6 @@ fn PayloadFieldModifier? make_modifier(HeaderConstructor header, FieldSpec* spec
 			ulong count = patch_ranges[0].count;
 			if (count <= 1) return NO_MODIFIER~;
 			modifier.values_kind = ModifierValueKind.IPV6_RANGES;
-			modifier.has_custom_traversal = range_step(field.value.ipv6_range_val.step) > 1;
 			modifier.patch_kind = patch_kind_for(modifier.values_kind, bit_offset, spec.bit_width);
 			modifier.ipv6_ranges = patch_ranges;
 			modifier.value_count = count;
@@ -693,7 +692,6 @@ fn PayloadFieldModifier? make_modifier(HeaderConstructor header, FieldSpec* spec
 			ulong count = total_uint_patch_count(patch_ranges);
 			if (count <= 1) return NO_MODIFIER~;
 			modifier.values_kind = ModifierValueKind.UINT_RANGES;
-			modifier.has_custom_traversal = uint_ranges_have_custom_traversal(ranges);
 			modifier.patch_kind = patch_kind_for(modifier.values_kind, bit_offset, spec.bit_width);
 			modifier.uint_ranges = patch_ranges;
 			modifier.value_count = count;
@@ -708,7 +706,6 @@ fn PayloadFieldModifier? make_modifier(HeaderConstructor header, FieldSpec* spec
 			ulong count = total_ipv4_patch_count(patch_ranges);
 			if (count <= 1) return NO_MODIFIER~;
 			modifier.values_kind = ModifierValueKind.IPV4_RANGES;
-			modifier.has_custom_traversal = ipv4_ranges_have_custom_traversal(ranges4);
 			modifier.patch_kind = patch_kind_for(modifier.values_kind, bit_offset, spec.bit_width);
 			modifier.ipv4_ranges = patch_ranges;
 			modifier.value_count = count;
@@ -723,7 +720,6 @@ fn PayloadFieldModifier? make_modifier(HeaderConstructor header, FieldSpec* spec
 			ulong count = total_ipv6_patch_count(patch_ranges);
 			if (count <= 1) return NO_MODIFIER~;
 			modifier.values_kind = ModifierValueKind.IPV6_RANGES;
-			modifier.has_custom_traversal = ipv6_ranges_have_custom_traversal(ranges6);
 			modifier.patch_kind = patch_kind_for(modifier.values_kind, bit_offset, spec.bit_width);
 			modifier.ipv6_ranges = patch_ranges;
 			modifier.value_count = count;

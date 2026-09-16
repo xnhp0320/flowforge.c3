@@ -345,7 +345,18 @@ fn int file_mode_file(String content, generator::MaybeCount cli_count, String ou
 	return run_file_mode(parsed.value, cli_count, output_path, verbose, reg);
 }
 
-<* DPDK-free validation of a runtime program (mirrors Runtime.check). *>
+<* Prints a fixup plan using the selected backend's checksum policy. *>
+fn bool print_verbose_runtime(Program program, RunOptions options, Registry* reg) {
+	Result result;
+	result.tinit();
+	runtime::Config? config = runtime::build_config(program, &result, options);
+	if (catch config) {
+		foreach (error : result.errors) io::eprintfn("ERROR: %s", error);
+		return false;
+	}
+	return print_verbose_program(program, reg, config.backend == "dpdk" ? runtime::live_fixup_options() : (FixupOptions){});
+}
+
 fn int run_runtime_check(String content, RunOptions options, bool verbose, Registry* reg) {
 	Parser p;
 	p.init(content);
@@ -355,7 +366,7 @@ fn int run_runtime_check(String content, RunOptions options, bool verbose, Regis
 		return 1;
 	}
 	Program program = parsed.value;
-	if (verbose && !print_verbose_program(program, reg, runtime::live_fixup_options())) return 1;
+	if (verbose && !print_verbose_runtime(program, options, reg)) return 1;
 
 	Runtime rt = runtime::runtime_with_registry(reg);
 	Result result = rt.check(program, options);
@@ -368,8 +379,7 @@ fn int run_runtime_check(String content, RunOptions options, bool verbose, Regis
 	return 0;
 }
 
-<* Live DPDK mode: parses a runtime program (with DPDK_ARGS) and transmits or
-   captures traffic via the EAL-backed runtime. Requires root / TAP access. *>
+<* Parses a runtime program and dispatches live TX/capture to its backend. *>
 fn int run_live_mode(String content, String program_name, RunOptions options, bool verbose, Registry* reg) {
 	Parser p;
 	p.init(content);
@@ -379,7 +389,7 @@ fn int run_live_mode(String content, String program_name, RunOptions options, bo
 		return 1;
 	}
 	Program program = parsed.value;
-	if (verbose && !print_verbose_program(program, reg, runtime::live_fixup_options())) return 1;
+	if (verbose && !print_verbose_runtime(program, options, reg)) return 1;
 
 	Runtime rt = runtime::runtime_with_registry(reg);
 	Result result = rt.run(program, program_name, options);
@@ -389,16 +399,16 @@ fn int run_live_mode(String content, String program_name, RunOptions options, bo
 
 	if (options.capture) {
 		print_port_results(result);
-		io::printfn("Capture completed; rte_eal_init parsed %d argument(s), %d port(s) received %d packet(s), %d byte(s), missed %d, errors %d",
-			result.eal_parsed_args, result.ports.len, result.rx_received, result.rx_bytes, result.rx_missed, result.rx_errors);
+		io::printfn("Capture completed; %d port(s) received %d packet(s), %d byte(s), missed %d, errors %d",
+			result.ports.len, result.rx_received, result.rx_bytes, result.rx_missed, result.rx_errors);
 		if (options.capture_file.has_value) {
 			io::printfn("Capture written to '%s' with %d packet(s)", options.capture_file.value, result.rx_received);
 		}
 		return 0;
 	}
 
-	io::printfn("DPDK runtime completed; rte_eal_init parsed %d argument(s), %d port(s) sent %d/%d packet(s), tx_errors %d, planned %d of %d flow(s), packet_len %d bytes, pmd_threads %d, rx_threads %d, tx_batch_size %d, clone_count %d, split %s, once %s, planned_transmissions_per_cycle %d",
-		result.eal_parsed_args, result.ports.len, result.tx_sent, result.tx_attempted, result.tx_errors,
+	io::printfn("%s runtime completed; %d port(s) sent %d/%d packet(s), tx_errors %d, planned %d of %d flow(s), packet_len %d bytes, pmd_threads %d, rx_threads %d, tx_batch_size %d, clone_count %d, split %s, once %s, planned_transmissions_per_cycle %d",
+		result.backend == "dpdk" ? "DPDK" : "TAP", result.ports.len, result.tx_sent, result.tx_attempted, result.tx_errors,
 		result.planned_packets, result.total_flows, result.packet_len,
 		result.pmd_threads, result.rx_threads, result.tx_batch_size, result.clone_count,
 		result.split ? "on" : "off", result.once ? "on" : "off", result.planned_transmissions);
@@ -562,17 +572,28 @@ fn int main(String[] args) {
 		return run_runtime_check(content, live_options, verbose, reg);
 	}
 
-	// Live DPDK mode: a runtime program declares DPDK_ARGS. Unless the user only
-	// asked to parse/check, drive the EAL-backed runtime (TX or capture).
-	if (!parse_only && (live_options.capture || content.contains("DPDK_ARGS:"))) {
+	// Inspect parsed variables so comments and string contents cannot select
+	// a live backend. DPDK_ARGS without BACKEND remains a legacy DPDK program.
+	Parser mode_parser;
+	mode_parser.init(content);
+	result::Result{Program, String} mode_program = mode_parser.parse();
+	bool runtime_program = false;
+	bool packet_program = false;
+	if (mode_program.is_ok) {
+		foreach (variable : mode_program.value.variables) {
+			if (variable.name == "BACKEND" || variable.name == "DPDK_ARGS") runtime_program = true;
+			if (variable.name == "PACKET") packet_program = true;
+		}
+	}
+	if (!parse_only && (live_options.capture || runtime_program)) {
 		return run_live_mode(content, args[0], live_options, verbose, reg);
 	}
 	if (live_flag_present) {
-		io::eprintfn("live options require a runtime program with a DPDK_ARGS variable");
+		io::eprintfn("live options require a runtime program with a BACKEND variable");
 		return usage(args[0]);
 	}
 
-	if (content.contains("PACKET:")) {
+	if (packet_program || runtime_program) {
 		return run_program(content, parse_only, verbose, reg);
 	}
 	return run_check(content, parse_only, verbose, reg);
@@ -584,11 +605,19 @@ fn void print_port_results(runtime::Result result) {
 			port.port_id, port.tx_sent, port.tx_attempted, port.tx_errors, port.rx_received, port.rx_bytes, port.rx_missed, port.rx_errors, port.planned_transmissions);
 		foreach (worker : result.workers) {
 			if (worker.port_id != port.port_id) continue;
+			if (result.backend == "tap") {
+				io::printfn("TX worker %d queue %d flows %d+%d sent %d/%d packet(s), tx_errors %d", worker.worker_id, worker.queue_id, worker.first_flow, worker.flow_count, worker.tx_sent, worker.tx_attempted, worker.tx_errors);
+				continue;
+			}
 			io::printfn("PMD worker %d lcore %d queue %d flows %d+%d sent %d/%d packet(s), tx_errors %d",
 				worker.worker_id, worker.lcore_id, worker.queue_id, worker.first_flow, worker.flow_count, worker.tx_sent, worker.tx_attempted, worker.tx_errors);
 		}
 		foreach (rx : result.rx_workers) {
 			if (rx.port_id != port.port_id) continue;
+			if (result.backend == "tap") {
+				io::printfn("RX worker %d queue %d received %d bytes %d", rx.worker_id, rx.queue_id, rx.rx_received, rx.rx_bytes);
+				continue;
+			}
 			io::printfn("RX worker %d lcore %d queue %d received %d bytes %d",
 				rx.worker_id, rx.lcore_id, rx.queue_id, rx.rx_received, rx.rx_bytes);
 		}

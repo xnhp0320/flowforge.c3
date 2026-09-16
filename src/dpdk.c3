@@ -4,7 +4,7 @@
    exported `rte_*` functions are bound directly; everything that DPDK only
    offers through macros, thread-local variables or `static inline` helpers is
    reached through the C shim in `csrc/dpdk_shim.c` (the `ff_*` functions). *>
-module flowforge::dpdk;
+module flowforge::dpdk @feat(DPDK);
 
 // The mbuf layout below assumes an LP64 target (64-bit pointers / rte_iova_t,
 // RTE_IOVA_IN_MBUF set). Both of our target arches (x86-64, aarch64) share it.
@@ -195,6 +195,7 @@ const usz FF_MBUF_LAYOUT_FIELDS = 8;
 extern fn void ff_mbuf_layout(usz* out);
 
 // --- shim: inline / thread-local DPDK operations -------------------------
+extern fn ulong rte_rand() @feat(DPDK);
 extern fn int ff_rte_errno();
 extern fn uint ff_lcore_id();
 extern fn int ff_pktmbuf_alloc_bulk(Mempool* pool, Mbuf** mbufs, uint count);

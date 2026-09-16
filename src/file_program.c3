@@ -83,7 +83,7 @@ fn FileProgram parse(Program program, generator::MaybeCount cli_packet_count = {
 
 	foreach (variable : program.variables) {
 		if (variable.name != "PACKET" && variable.name != "PACKET_COUNT" &&
-			variable.name != "DPDK_ARGS") {
+			variable.name != "DPDK_ARGS" && variable.name != "BACKEND" && variable.name != "INTERFACE") {
 			result.warnings.push(string::tformat("unknown file-mode variable '%s'", variable.name));
 		}
 	}

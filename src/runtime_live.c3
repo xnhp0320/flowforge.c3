@@ -8,7 +8,7 @@
    e2e execution needs a real EAL, root privileges and /dev/net/tun access; the
    logic here is exercised through unit tests for the parts that can run without
    the EAL (see runtime_dpdk_test.c3). *>
-module flowforge::runtime;
+module flowforge::runtime @feat(DPDK);
 import flowforge::ast;
 import flowforge::dpdk;
 import flowforge::checker;
@@ -150,10 +150,6 @@ struct LiveStatsState {
 	long next;
 }
 
-struct FlowRange {
-	ulong first;
-	ulong count;
-}
 
 struct SeedContext {
 	char[] base;
@@ -770,16 +766,6 @@ fn int run_rx_worker_impl(RxWorkerContext* context) @private {
 	return 0;
 }
 
-fn FlowRange assigned_flow_range(ulong planned_flows, ulong worker_count, ulong worker_id, bool split) {
-	if (!split) {
-		return { .first = 0, .count = planned_flows };
-	}
-	ulong base = planned_flows / worker_count;
-	ulong extra = planned_flows % worker_count;
-	ulong count = base + (worker_id < extra ? 1ul : 0ul);
-	ulong first = worker_id * base + (worker_id < extra ? worker_id : extra);
-	return { .first = first, .count = count };
-}
 
 fn WorkerResult make_worker_result(WorkerContext* context) @private {
 	return {
@@ -1157,7 +1143,7 @@ fn Result Runtime.init(&self, Program program, String eal_program_name) {
 }
 
 <* Runs the live DPDK pipeline (TX or capture), mirroring C++ Runtime::run. *>
-fn Result Runtime.run(&self, Program program, String eal_program_name, RunOptions options = default_run_options()) {
+fn Result Runtime.run_dpdk(&self, Program program, String eal_program_name, RunOptions options = default_run_options()) {
 	Result result;
 	result.tinit();
 	result.clone_count = 1;

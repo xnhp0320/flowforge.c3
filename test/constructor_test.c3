@@ -517,3 +517,14 @@ fn void test_ip_range_steps_are_preserved_by_constructor() @test {
 	assert(ranges4[0].step.has_value && ranges4[0].step.value == 2);
 	assert(ranges6[0].step.has_value && ranges6[0].step.value == 3);
 }
+
+fn void test_range_rand_is_preserved_by_constructor() @test {
+	Registry reg = registry::create_empty_registry();
+	reg.register_header("MyHdr", { registry::fld("field", "b16_ranges") });
+	BuildResult result = build_with(`MyHdr(field="[1-10(rand), 20-30]")`, &reg);
+	assert(result.ok);
+	UIntRange[] ranges = get_field(hdrs(result)[0], "field").value.uint_ranges_val;
+	assert(ranges.len == 2);
+	assert(ranges[0].random && !ranges[0].step.has_value);
+	assert(!ranges[1].random);
+}

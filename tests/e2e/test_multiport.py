@@ -19,7 +19,9 @@ PACKET = 'Ether(dst="ff:ff:ff:ff:ff:ff",src="02:64:74:61:70:00")/IP(src="[192.0.
 
 
 @pytest.fixture(autouse=True)
-def persistent_test_taps():
+def persistent_test_taps(pytestconfig):
+    if pytestconfig.getoption("--backend") != "dpdk":
+        pytest.skip("DPDK multiport/lcore test")
     # Keep interface names resolvable while the capture socket drains packets
     # after --once closes its ethdevs.
     created = []

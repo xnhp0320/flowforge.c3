@@ -241,7 +241,6 @@ fn void test_integer_range_step_counts_and_applies_values() @test {
 	assert(result.ok);
 	PayloadFieldModifier* modifier = find_modifier(result, "MyHdr", "field");
 	assert(modifier != null);
-	assert(modifier.has_custom_traversal);
 	assert(modifier.value_count == 100);
 	assert(modifier.apply(buf[..], 49).is_ok);
 	assert(u16_at(buf[..], 0) == 99);
@@ -279,7 +278,6 @@ fn void test_mixed_range_list_uses_each_ranges_step() @test {
 	assert(result.ok);
 	PayloadFieldModifier* modifier = find_modifier(result, "MyHdr", "field");
 	assert(modifier != null);
-	assert(modifier.has_custom_traversal);
 	assert(modifier.value_count == 11);
 	assert(modifier.apply(buf[..], 5).is_ok);
 	assert(u16_at(buf[..], 0) == 10);
@@ -311,7 +309,7 @@ fn void test_range_step_traverses_complete_range_when_step_exceeds_span() @test 
 	assert(u16_at(buf[..], 0) == 12);
 }
 
-fn void test_unit_step_ranges_keep_fast_path() @test {
+fn void test_unit_step_ranges_use_sequential_traversal() @test {
 	Registry reg = registry::create_empty_registry();
 	reg.register_header("MyHdr", { registry::fld("field", "b16_ranges") });
 	BuildResult built = build_with(`MyHdr(field="[1-3, 10-12(step=1)]")`, &reg);
@@ -321,10 +319,88 @@ fn void test_unit_step_ranges_keep_fast_path() @test {
 	assert(result.ok);
 	PayloadFieldModifier* modifier = find_modifier(result, "MyHdr", "field");
 	assert(modifier != null);
-	assert(!modifier.has_custom_traversal);
+	foreach (range : modifier.uint_ranges) assert(range.traversal.kind == RangeTraversalKind.SEQUENTIAL);
 	assert(modifier.value_count == 6);
 	assert(modifier.apply(buf[..], 5).is_ok);
 	assert(u16_at(buf[..], 0) == 12);
+}
+
+fn void test_rand_ranges_apply_values_within_each_range() @test {
+	Registry reg = registry::create_empty_registry();
+	reg.register_header("MyHdr", { registry::fld("field", "b16_ranges") });
+	BuildResult built = build_with(`MyHdr(field="[10-12(rand), 100-101(rand)]")`, &reg);
+	assert(built.ok);
+	char[2] buf;
+	SerializeResult result = serializer::serialize_packet(built.packet, &reg, buf[..]);
+	assert(result.ok);
+	PayloadFieldModifier* modifier = find_modifier(result, "MyHdr", "field");
+	assert(modifier != null);
+	assert(modifier.value_count == 5);
+	for (ulong index = 0; index < 5; index++) {
+		Result{uint128, String} applied = modifier.apply(buf[..], index);
+		assert(applied.is_ok);
+		ushort value = u16_at(buf[..], 0);
+		assert(applied.value == (uint128)value);
+		if (index < 3) {
+			assert(value >= 10 && value <= 12);
+		} else {
+			assert(value >= 100 && value <= 101);
+		}
+	}
+}
+
+fn void test_rand_ip_ranges_apply_values_within_bounds() @test {
+	BuildResult built = build_default(
+		`IP(src="10.0.0.10-10.0.0.12(rand)")/IPv6(src="2001:db8::10-2001:db8::12(rand)")`);
+	assert(built.ok);
+	char[60] buf;
+	SerializeResult result = serialize_into(built.packet, buf[..]);
+	assert(result.ok);
+	PayloadFieldModifier* modifier4 = find_modifier(result, "IP", "src");
+	PayloadFieldModifier* modifier6 = find_modifier(result, "IPv6", "src");
+	assert(modifier4 != null && modifier6 != null);
+	for (ulong index = 0; index < 3; index++) {
+		Result{uint128, String} applied4 = modifier4.apply(buf[..], index);
+		assert(applied4.is_ok);
+		uint address4 = (uint)u16_at(buf[..], 12) << 16 | (uint)u16_at(buf[..], 14);
+		assert(applied4.value == (uint128)address4);
+		assert(byte_at(buf[..], 15) >= 10 && byte_at(buf[..], 15) <= 12);
+		Result{uint128, String} applied6 = modifier6.apply(buf[..], index);
+		assert(applied6.is_ok);
+		uint128 address6 = 0;
+		foreach (b : buf[28:16]) address6 = (address6 << 8) | (uint128)b;
+		assert(applied6.value == address6);
+		assert(byte_at(buf[..], 43) >= 0x10 && byte_at(buf[..], 43) <= 0x12);
+	}
+}
+
+fn void test_pseudo_delta_uses_applied_addresses_for_all_traversals() @test {
+	String[3] programs = {
+		`IP(src="10.0.0.1-10.0.0.4",dst="192.0.2.1-192.0.2.4")/UDP()`,
+		`IP(src="10.0.0.1-10.0.0.4(step=2)",dst="192.0.2.1-192.0.2.4(step=3)")/UDP()`,
+		`IP(src="10.0.0.1-10.0.0.4(rand)",dst="192.0.2.1-192.0.2.4(rand)")/UDP()`,
+	};
+	foreach (program : programs) {
+		Registry reg = registry::create_default_registry();
+		BuildResult built = build_with(program, &reg);
+		assert(built.ok);
+		char[28] buf;
+		SerializeResult serialized = serializer::serialize_packet(built.packet, &reg, buf[..]);
+		assert(serialized.ok);
+		FixupPlanResult plan = serializer::plan_packet_fixups(built.packet, &reg, serialized.payload);
+		assert(plan.ok);
+		uint base = serializer::ipv4_pseudo_sum(buf[..], 0, (char)17, (ushort)8);
+		for (ulong i = 0; i < 32; i++) {
+			uint delta = 0;
+			foreach (&modifier : serialized.modifiers) {
+				Result{uint128, String} applied = modifier.apply(buf[..], i % modifier.value_count);
+				assert(applied.is_ok);
+				delta += modifier.ipv4_pseudo_delta(plan.plan, applied.value);
+			}
+			uint actual = serializer::ipv4_pseudo_sum(buf[..], 0, (char)17, (ushort)8);
+			assert(serializer::fold_checksum(base + delta) == serializer::fold_checksum(actual));
+		}
+	}
 }
 
 fn void test_ip_range_steps_count_and_apply_values() @test {
@@ -337,8 +413,8 @@ fn void test_ip_range_steps_count_and_apply_values() @test {
 	PayloadFieldModifier* modifier4 = find_modifier(result, "IP", "src");
 	PayloadFieldModifier* modifier6 = find_modifier(result, "IPv6", "src");
 	assert(modifier4 != null && modifier6 != null);
-	assert(modifier4.has_custom_traversal && modifier4.value_count == 100);
-	assert(modifier6.has_custom_traversal && modifier6.value_count == 255);
+	assert(modifier4.value_count == 100);
+	assert(modifier6.value_count == 255);
 	assert(modifier4.apply(buf[..], 49).is_ok);
 	assert(byte_at(buf[..], 12) == 10 && byte_at(buf[..], 15) == 99);
 	assert(modifier6.apply(buf[..], 127).is_ok);
@@ -358,7 +434,6 @@ fn void test_large_ipv6_stepped_range_saturates_count() @test {
 	assert(result.ok);
 	PayloadFieldModifier* modifier = find_modifier(result, "IPv6", "src");
 	assert(modifier != null);
-	assert(modifier.has_custom_traversal);
 	assert(modifier.value_count == ulong::max);
 }
 
@@ -387,7 +462,7 @@ fn void test_modifier_rejects_out_of_range_index() @test {
 	PayloadFieldModifier* modifier = find_modifier(result, "IP", "src");
 	assert(modifier != null);
 
-	Result{bool, String} applied = modifier.apply(buf[..], 2);
+	Result{uint128, String} applied = modifier.apply(buf[..], 2);
 	assert(!applied.is_ok);
 	assert(applied.error.contains("out of range"));
 }
@@ -493,9 +568,9 @@ fn void test_checksum_only_fixup_refreshes_seed_without_rewriting_lengths() @tes
 	set_u16(buf[..], 16, 0xaaaa);
 	set_u16(buf[..], 38, 0xbbbb);
 
-	assert(modifier.apply(buf[..], 2).is_ok);
-	uint? delta = modifier.ipv4_pseudo_delta(plan.plan, 2);
-	if (catch delta) assert(false);
+	Result{uint128, String} applied = modifier.apply(buf[..], 2);
+	assert(applied.is_ok);
+	uint delta = modifier.ipv4_pseudo_delta(plan.plan, applied.value);
 	FixupResult fixup = serializer::apply_checksum_fixup_plan(serialize.payload, plan.plan, delta);
 
 	assert(fixup.ok);
