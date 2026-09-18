@@ -35,6 +35,7 @@ struct RunOptions {
 	ulong clone_count;
 	bool split;
 	bool once;
+	bool jumbo;
 	MaybeULong stats_interval_seconds;
 	bool capture;
 	Maybe{String} capture_file;
@@ -101,6 +102,10 @@ fn FixupOptions live_fixup_options() {
 }
 
 fn RunOptions default_run_options() => { .clone_count = 1 };
+
+fn usz packet_size_limit(RunOptions options) {
+	return options.jumbo ? generator::GENERATOR_MAX_PACKET_SIZE : generator::GENERATOR_DEFAULT_MAX_PACKET_SIZE;
+}
 
 fn Runtime runtime_with_default() {
 	return { .registry = mem::tnew(Registry, registry::create_default_registry()) };
@@ -215,6 +220,10 @@ fn Config? build_config(Program program, Result* result, RunOptions options) {
 		return BUILD_ERR~;
 	}
 	result.backend = config.backend;
+	if (options.jumbo && config.backend != "dpdk") {
+		result.errors.push("--jumbo requires the dpdk backend");
+		return BUILD_ERR~;
+	}
 	if (config.backend == "tap") {
 		Variable*? iface = variables.get("INTERFACE");
 		if (catch iface) {
@@ -365,7 +374,7 @@ fn Result Runtime.check(&self, Program program, RunOptions options = default_run
 		return result;
 	}
 
-	PacketGenerator generator = { .registry = self.registry };
+	PacketGenerator generator = { .registry = self.registry, .max_packet_size = packet_size_limit(options) };
 	generator::MaybeCount count = config.packet_count;
 	PacketGenerationResult generated = generator.prepare(config.packet, count, config.backend == "dpdk" ? live_fixup_options() : (FixupOptions){});
 

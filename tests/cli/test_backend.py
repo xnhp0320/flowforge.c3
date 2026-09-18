@@ -49,3 +49,20 @@ def test_invalid_backend_has_diagnostic(run):
     result = run('BACKEND: "invalid"\nPACKET: Ether()', '--check')
     assert result.returncode != 0
     assert "BACKEND must be" in result.stderr
+
+
+def test_jumbo_enables_packets_larger_than_default_mbuf(run):
+    source = 'BACKEND: "dpdk"\nDPDK_ARGS: "-l 0"\nPACKET: Ether()/Payload(length=3000)'
+
+    normal = run(source, '--check')
+    assert normal.returncode != 0
+
+    jumbo = run(source, '--check', '--jumbo')
+    assert jumbo.returncode == 0, jumbo.stderr
+    assert "check ok" in jumbo.stdout
+
+
+def test_jumbo_rejects_tap_backend(run):
+    result = run('BACKEND: "tap"\nINTERFACE: "fftest0"\nPACKET: Ether()', '--check', '--jumbo')
+    assert result.returncode != 0
+    assert "--jumbo requires the dpdk backend" in result.stderr

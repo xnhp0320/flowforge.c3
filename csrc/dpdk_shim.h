@@ -68,7 +68,7 @@ uint16_t ff_eth_rx_burst(uint16_t port_id, uint16_t queue_id, struct rte_mbuf **
 /* Configure the requested checksum features after validating the port's
  * advertised capabilities. */
 int ff_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
-	uint32_t tx_offload_features);
+	uint32_t tx_offload_features, uint16_t mtu);
 int ff_eth_tx_queue_setup(uint16_t port_id, uint16_t queue_id, uint16_t nb_desc,
 	unsigned socket_id, uint32_t tx_offload_features);
 int ff_eth_stats_get(uint16_t port_id, struct ff_eth_stats *out);

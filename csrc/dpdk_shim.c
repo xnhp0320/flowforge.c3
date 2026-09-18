@@ -98,7 +98,7 @@ static uint64_t ff_dpdk_tx_offloads(uint32_t features) {
 }
 
 int ff_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
-		uint32_t tx_offload_features) {
+		uint32_t tx_offload_features, uint16_t mtu) {
 	struct rte_eth_dev_info dev_info;
 	memset(&dev_info, 0, sizeof(dev_info));
 	int rc = rte_eth_dev_info_get(port_id, &dev_info);
@@ -118,6 +118,9 @@ int ff_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 	struct rte_eth_conf port_conf;
 	memset(&port_conf, 0, sizeof(port_conf));
 	port_conf.txmode.offloads = tx_offloads;
+	if (mtu != 0) {
+		port_conf.rxmode.mtu = mtu;
+	}
 	return rte_eth_dev_configure(port_id, nb_rx_q, nb_tx_q, &port_conf);
 }
 

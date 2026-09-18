@@ -6,6 +6,7 @@ import flowforge::runtime;
 import flowforge::serializer;
 import flowforge::testutil;
 import flowforge::constructor;
+import flowforge::generator;
 
 const String TAP_RUNTIME_PROGRAM =
 	"DPDK_ARGS: \"--no-huge --no-pci -l 0\"\n"
@@ -33,6 +34,34 @@ fn void test_valid_tap_runtime_program() @test {
 	assert(result.errors.len() == 0);
 	assert(result.total_flows == 3);
 	assert(result.planned_packets == 3);
+}
+
+fn void test_jumbo_selects_large_packet_limit_and_requires_dpdk() @test {
+	RunOptions options = runtime::default_run_options();
+	assert(runtime::packet_size_limit(options) == generator::GENERATOR_DEFAULT_MAX_PACKET_SIZE);
+	options.jumbo = true;
+	assert(runtime::packet_size_limit(options) == generator::GENERATOR_MAX_PACKET_SIZE);
+
+	Runtime rt = runtime::runtime_with_default();
+	Result result = rt.check(must_parse_program(
+		"BACKEND: \"tap\"\nINTERFACE: \"fftest0\"\nPACKET: Ether()"), options);
+	assert(!result.ok);
+	assert(result.errors.len() == 1);
+	assert(result.errors[0] == "--jumbo requires the dpdk backend");
+}
+
+fn void test_jumbo_allows_packet_larger_than_default_mbuf() @test {
+	Runtime rt = runtime::runtime_with_default();
+	Program program = must_parse_program(
+		"BACKEND: \"dpdk\"\nDPDK_ARGS: \"-l 0\"\nPACKET: Ether()/Payload(length=3000)");
+	Result normal = rt.check(program);
+	assert(!normal.ok);
+
+	RunOptions options = runtime::default_run_options();
+	options.jumbo = true;
+	Result jumbo = rt.check(program, options);
+	assert(jumbo.ok);
+	assert(jumbo.packet_len == 3014);
 }
 
 fn void test_tap_runtime_packet_serializes_and_fixes_up() @test {

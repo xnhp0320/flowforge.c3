@@ -145,8 +145,11 @@ const ulong TX_OUTER_IPV4 = 1ul << 59;
 
 // DPDK defaults from rte_mbuf_core.h / rte_config.h and rte_launch.h.
 const uint MBUF_DEFAULT_DATAROOM = 2048;
+const uint MBUF_JUMBO_DATAROOM = 10240;
 const ushort MBUF_DEFAULT_HEADROOM = 128;
 const uint MBUF_DEFAULT_BUF_SIZE = 2176; // 2048 dataroom + 128 headroom
+const uint MBUF_JUMBO_BUF_SIZE = 10368; // 10240 dataroom + 128 headroom
+const ushort JUMBO_MTU = 9216;
 const uint LCORE_WAIT_STATE = 0;
 
 // Subset of rte_eth_stats read back by the runtime (matches struct ff_eth_stats).
@@ -205,7 +208,7 @@ extern fn void ff_pktmbuf_free_bulk(Mbuf** mbufs, uint count);
 extern fn ushort ff_eth_tx_burst(ushort port_id, ushort queue_id, Mbuf** tx_pkts, ushort nb_pkts);
 extern fn ushort ff_eth_tx_prepare(ushort port_id, ushort queue_id, Mbuf** tx_pkts, ushort nb_pkts);
 extern fn ushort ff_eth_rx_burst(ushort port_id, ushort queue_id, Mbuf** rx_pkts, ushort nb_pkts);
-extern fn int ff_eth_dev_configure(ushort port_id, ushort nb_rx_q, ushort nb_tx_q, uint tx_offload_features);
+extern fn int ff_eth_dev_configure(ushort port_id, ushort nb_rx_q, ushort nb_tx_q, uint tx_offload_features, ushort mtu);
 extern fn int ff_eth_tx_queue_setup(ushort port_id, ushort queue_id, ushort nb_desc, uint socket_id, uint tx_offload_features);
 extern fn int ff_eth_stats_get(ushort port_id, EthStats* out);
 extern fn int ff_eth_dev_driver_name(ushort port_id, char* out, usz out_len);

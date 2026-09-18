@@ -22,8 +22,8 @@ fn int usage(String prog) {
 	io::eprintfn("       %s [--headers <file>] [--parse-only] -e '<packet expression>'", prog);
 	io::eprintfn("       %s [--headers <file>] -w <out.pcap> [-c <count>] <program.packet>", prog);
 	io::eprintfn("       %s [--headers <file>] -w <out.pcap> [-c <count>] -e '<packet expression>'", prog);
-	io::eprintfn("       %s [--headers <file>] [-v|--verbose] [--clone <n>] [--split] [--once] [--stats-interval <sec>] [--dump-mempool-seed <out.bin>] <program.packet>", prog);
-	io::eprintfn("       %s [--headers <file>] [-v|--verbose] --capture [<out.pcap>] <program.packet>", prog);
+	io::eprintfn("       %s [--headers <file>] [-v|--verbose] [--clone <n>] [--split] [--once] [--jumbo] [--stats-interval <sec>] [--dump-mempool-seed <out.bin>] <program.packet>", prog);
+	io::eprintfn("       %s [--headers <file>] [-v|--verbose] [--jumbo] --capture [<out.pcap>] <program.packet>", prog);
 	return 1;
 }
 
@@ -492,6 +492,10 @@ fn int main(String[] args) {
 		}
 		else if (args[i] == "--once") {
 			live_options.once = true;
+			live_flag_present = true;
+		}
+		else if (args[i] == "--jumbo") {
+			live_options.jumbo = true;
 			live_flag_present = true;
 		}
 		else if (args[i] == "--stats-interval") {

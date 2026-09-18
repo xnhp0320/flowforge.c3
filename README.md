@@ -179,8 +179,10 @@ sudo ./build/ffg examples/native_tap.packet --clone 4 --stats-interval 2
 sudo ./build/ffg examples/native_tap.packet --capture out.pcap
 ```
 
-Live flags: `--clone <n>`, `--split`, `--once`, `--stats-interval <sec>`,
-`--capture [<out.pcap>]`. A program is treated as a live runtime program when it
+Live flags: `--clone <n>`, `--split`, `--once`, `--jumbo`, `--stats-interval <sec>`,
+`--capture [<out.pcap>]`. For the DPDK backend, `--jumbo` raises the single-mbuf
+packet limit and data room to 10240 bytes (plus 128 bytes of headroom) and sets
+the receive MTU to 9216. A program is treated as a live runtime program when it
 declares `BACKEND` (or legacy `DPDK_ARGS`); `--check` forces validation instead.
 For DPDK, use `build/ffg-dpdk` with `examples/tap_runtime.packet`.
 

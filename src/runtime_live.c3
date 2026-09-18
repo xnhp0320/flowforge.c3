@@ -382,13 +382,21 @@ fn bool inspect_mbuf_pool(Mempool* pool, char[] base, uint expected_count, Maybe
 	return true;
 }
 
-fn Mempool* make_tx_mbuf_pool(GeneratedPacket* packet, ulong worker_count, ushort batch_size, Maybe{String} dump_file, List{String}* errors) @private {
+fn ushort mbuf_size_for(bool jumbo) @private {
+	return (ushort)(jumbo ? dpdk::MBUF_JUMBO_BUF_SIZE : dpdk::MBUF_DEFAULT_BUF_SIZE);
+}
+
+fn ushort port_mtu_for(bool jumbo) @private {
+	return jumbo ? dpdk::JUMBO_MTU : 0;
+}
+
+fn Mempool* make_tx_mbuf_pool(GeneratedPacket* packet, ulong worker_count, ushort batch_size, Maybe{String} dump_file, bool jumbo, List{String}* errors) @private {
 	Mempool* pool = dpdk::rte_pktmbuf_pool_create(
 		zstr("ffg_tx_pool"),
 		mbuf_count_for(worker_count, batch_size),
 		RUNTIME_MBUF_CACHE_SIZE,
 		0,
-		(ushort)dpdk::MBUF_DEFAULT_BUF_SIZE,
+		mbuf_size_for(jumbo),
 		(int)dpdk::rte_socket_id());
 	if (pool == null) {
 		errors.push(string::tformat("rte_pktmbuf_pool_create failed: %s", dpdk::strerror(dpdk::ff_rte_errno())));
@@ -411,7 +419,7 @@ fn Mempool* make_tx_mbuf_pool(GeneratedPacket* packet, ulong worker_count, ushor
 	return pool;
 }
 
-fn Mempool* make_rx_mbuf_pool(ushort rx_queue_count, List{String}* errors) @private {
+fn Mempool* make_rx_mbuf_pool(ushort rx_queue_count, bool jumbo, List{String}* errors) @private {
 	ulong needed = (ulong)rx_queue_count * ((ulong)RUNTIME_RX_DESCRIPTORS + (ulong)RUNTIME_MAX_RX_BATCH_SIZE * 2) + RUNTIME_MBUF_CACHE_SIZE;
 	if (needed < RUNTIME_CAPTURE_MBUF_COUNT) needed = RUNTIME_CAPTURE_MBUF_COUNT;
 	Mempool* pool = dpdk::rte_pktmbuf_pool_create(
@@ -419,7 +427,7 @@ fn Mempool* make_rx_mbuf_pool(ushort rx_queue_count, List{String}* errors) @priv
 		(uint)needed,
 		RUNTIME_MBUF_CACHE_SIZE,
 		0,
-		(ushort)dpdk::MBUF_DEFAULT_BUF_SIZE,
+		mbuf_size_for(jumbo),
 		(int)dpdk::rte_socket_id());
 	if (pool == null) {
 		errors.push(string::tformat("Rx rte_pktmbuf_pool_create failed: %s", dpdk::strerror(dpdk::ff_rte_errno())));
@@ -470,7 +478,7 @@ fn void finish_live_port_run(Result* result, bool port_started) {
 	result.ok = port_started && result.errors.len() == 0;
 }
 
-fn bool configure_and_start_port(ushort port_id, ushort rx_queue_count, ushort tx_queue_count, Mempool* mbuf_pool, uint tx_offload_features, List{String}* errors, Result* result) @private {
+fn bool configure_and_start_port(ushort port_id, ushort rx_queue_count, ushort tx_queue_count, Mempool* mbuf_pool, uint tx_offload_features, bool jumbo, List{String}* errors, Result* result) @private {
 	ushort port_count = dpdk::rte_eth_dev_count_avail();
 	if (port_count == 0) {
 		errors.push("no DPDK ethdev ports are available");
@@ -501,7 +509,7 @@ fn bool configure_and_start_port(ushort port_id, ushort rx_queue_count, ushort t
 		if (driver_ops != null) mem::free((void*)driver_ops);
 	}
 
-	rc = dpdk::ff_eth_dev_configure(port_id, rx_queue_count, tx_queue_count, tx_offload_features);
+	rc = dpdk::ff_eth_dev_configure(port_id, rx_queue_count, tx_queue_count, tx_offload_features, port_mtu_for(jumbo));
 	if (rc < 0) {
 		errors.push(string::tformat("rte_eth_dev_configure failed for port %d: %s", port_id, dpdk::strerror(-rc)));
 		return false;
@@ -1163,7 +1171,7 @@ fn Result Runtime.run_dpdk(&self, Program program, String eal_program_name, RunO
 		return result;
 	}
 
-	PacketGenerator generator = { .registry = self.registry };
+	PacketGenerator generator = { .registry = self.registry, .max_packet_size = packet_size_limit(options) };
 	PacketGenerationResult generated = generator.prepare(config.packet, config.packet_count, live_fixup_options(), mem);
 	append_strings(&result.warnings, generated.warnings);
 	append_strings(&result.errors, generated.errors);
@@ -1184,7 +1192,8 @@ fn Result Runtime.run_dpdk(&self, Program program, String eal_program_name, RunO
 	result.once = options.once;
 
 	result.planned_transmissions = checked_total_transmission_count(result.planned_packets, result.pmd_threads, options, &result);
-	if (generated.packet.base_payload.len > (usz)dpdk::MBUF_DEFAULT_DATAROOM) {
+	usz mbuf_dataroom = options.jumbo ? (usz)dpdk::MBUF_JUMBO_DATAROOM : (usz)dpdk::MBUF_DEFAULT_DATAROOM;
+	if (generated.packet.base_payload.len > mbuf_dataroom) {
 		result.errors.push(string::tformat("packet length %d does not fit in a DPDK mbuf", generated.packet.base_payload.len));
 	}
 	if (result.errors.len()) {
@@ -1214,12 +1223,12 @@ fn Result Runtime.run_dpdk(&self, Program program, String eal_program_name, RunO
 	install_signal_handlers();
 
 	usz started = 0;
-	Mempool* tx_pool = make_tx_mbuf_pool(&generated.packet, tx_threads, batch_size, options.mempool_seed_dump_file, &result.errors);
-	Mempool* rx_pool = make_rx_mbuf_pool((ushort)(rx_queue_count * ports.len), &result.errors);
+	Mempool* tx_pool = make_tx_mbuf_pool(&generated.packet, tx_threads, batch_size, options.mempool_seed_dump_file, options.jumbo, &result.errors);
+	Mempool* rx_pool = make_rx_mbuf_pool((ushort)(rx_queue_count * ports.len), options.jumbo, &result.errors);
 	uint tx_offload_features = requested_tx_offload_features(generated.packet.fixup_plan.offload);
 	if (tx_pool != null && rx_pool != null) {
 		foreach (port : ports) {
-			if (!configure_and_start_port(port, rx_queue_count, tx_queue_count, rx_pool, tx_offload_features, &result.errors, &result)) break;
+			if (!configure_and_start_port(port, rx_queue_count, tx_queue_count, rx_pool, tx_offload_features, options.jumbo, &result.errors, &result)) break;
 			started++;
 		}
 		if (started == ports.len) {
@@ -1272,11 +1281,11 @@ fn void run_capture(Config config, String eal_program_name, RunOptions options, 
 	if (!options.capture_file.has_value) {
 		install_signal_handlers();
 		ushort queues = (ushort)(result.rx_threads / (ulong)ports.len);
-		Mempool* rx_pool = make_rx_mbuf_pool((ushort)result.rx_threads, &result.errors);
+		Mempool* rx_pool = make_rx_mbuf_pool((ushort)result.rx_threads, options.jumbo, &result.errors);
 		usz started = 0;
 		if (rx_pool != null) {
 			foreach (port : ports) {
-				if (!configure_and_start_port(port, queues, 1, rx_pool, 0, &result.errors, result)) break;
+				if (!configure_and_start_port(port, queues, 1, rx_pool, 0, options.jumbo, &result.errors, result)) break;
 				started++;
 			}
 			if (started == ports.len) {
@@ -1301,7 +1310,7 @@ fn void run_capture(Config config, String eal_program_name, RunOptions options, 
 		RUNTIME_CAPTURE_MBUF_COUNT,
 		RUNTIME_MBUF_CACHE_SIZE,
 		0,
-		(ushort)dpdk::MBUF_DEFAULT_BUF_SIZE,
+		mbuf_size_for(options.jumbo),
 		(int)dpdk::rte_socket_id());
 	if (pool == null) {
 		result.errors.push(string::tformat("rte_pktmbuf_pool_create failed: %s", dpdk::strerror(dpdk::ff_rte_errno())));
@@ -1340,7 +1349,7 @@ fn void run_capture(Config config, String eal_program_name, RunOptions options, 
 	ushort rx_queue_count = rx_threads > 0 ? (ushort)rx_threads : 1;
 	bool port_started = false;
 
-	if (configure_and_start_port(ports[0], rx_queue_count, tx_queue_count, pool, 0, &result.errors, result)) {
+	if (configure_and_start_port(ports[0], rx_queue_count, tx_queue_count, pool, 0, options.jumbo, &result.errors, result)) {
 		port_started = true;
 
 		if (have_file) {

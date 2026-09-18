@@ -13,7 +13,8 @@ faultdef GENERATE_ERR;
 
 alias MaybeCount = Maybe{ulong};
 
-const usz GENERATOR_MAX_PACKET_SIZE = 2048;
+const usz GENERATOR_DEFAULT_MAX_PACKET_SIZE = 2048;
+const usz GENERATOR_MAX_PACKET_SIZE = 10240;
 const ulong ULONG_MAX = 0xFFFFFFFFFFFFFFFF;
 
 struct FlowIndexPlan {
@@ -44,6 +45,7 @@ fn void PacketGenerationResult.tinit(&self) {
 
 struct PacketGenerator {
 	Registry* registry;
+	usz max_packet_size;
 }
 
 <* Runs check → construct → serialize → fixup and plans range expansion.
@@ -162,8 +164,10 @@ fn bool GeneratedPacket.apply_flow_checksums_only_unchecked(&self, ulong flow_in
 
 fn bool PacketGenerator.serialize_generated(&self, PacketConstructor packet, FixupOptions fixup_options, GeneratedPacket* out, List{String}* errors, Allocator alloc) {
 	char[GENERATOR_MAX_PACKET_SIZE] scratch;
+	usz max_packet_size = self.max_packet_size != 0 ? self.max_packet_size : GENERATOR_DEFAULT_MAX_PACKET_SIZE;
+	if (max_packet_size > GENERATOR_MAX_PACKET_SIZE) max_packet_size = GENERATOR_MAX_PACKET_SIZE;
 
-	SerializeResult serialized = serializer::serialize_packet(packet, self.registry, scratch[..]);
+	SerializeResult serialized = serializer::serialize_packet(packet, self.registry, scratch[:max_packet_size]);
 	foreach (e : serialized.errors) errors.push(e);
 	if (!serialized.ok) return false;
 
