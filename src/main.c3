@@ -11,7 +11,6 @@ import flowforge::runtime;
 import flowforge::serializer;
 import flowforge::value;
 import std::collections::list;
-import std::collections::result;
 import std::io;
 import std::io::file;
 
@@ -157,8 +156,7 @@ fn generator::MaybeCount program_packet_count(Program program) {
 	generator::MaybeCount count;
 	foreach (&variable : program.variables) {
 		if (variable.name != "PACKET_COUNT") continue;
-		ScalarValue? value = ast::evaluate(variable.expression);
-		if (catch value) return count;
+		ScalarValue value = ast::evaluate(variable.expression);
 		if (value.kind != ScalarKind.INTEGER || value.int_val <= 0) return count;
 		count.set((ulong)value.int_val);
 		return count;
@@ -170,8 +168,7 @@ fn bool print_verbose_program(Program program, Registry* reg, FixupOptions fixup
 	bool ok = true;
 	generator::MaybeCount count = program_packet_count(program);
 	foreach (variable : program.variables) {
-		ScalarValue? value = ast::evaluate(variable.expression);
-		if (catch value) continue;
+		ScalarValue value = ast::evaluate(variable.expression);
 		if (value.kind != ScalarKind.PACKET) continue;
 		generator::MaybeCount packet_count = variable.name == "PACKET" ? count : {};
 		ok = print_verbose_packet(variable.name, value.packet_val, reg, packet_count, fixup_options) && ok;
@@ -193,16 +190,22 @@ fn Registry*? build_registry(String headers_content) {
 	return reg;
 }
 
+<* Prints the detail of a failed parse: the parser's formatted message when it
+   recorded one, otherwise the fault description (e.g. lexer faults). *>
+fn int parse_failed(Parser* p, fault err) {
+	io::eprintfn("parse error: %s", p.last_error.message.len ? p.last_error.message : err.description);
+	return 1;
+}
+
 fn int run_check(String input, bool parse_only, bool verbose, Registry* reg) {
 	Parser p;
-	p.init(input);
-
-	result::Result{Packet, String} parsed = p.parse_packet();
-	if (!parsed.is_ok) {
-		io::eprintfn("parse error: %s", parsed.error);
+	if (catch err = p.init(input)) {
+		io::eprintfn("parse error: %s", err.description);
 		return 1;
 	}
-	Packet packet = parsed.value;
+	Packet? parsed = p.parse_packet();
+	if (catch err = parsed) return parse_failed(&p, err);
+	Packet packet = parsed;
 
 	io::printfn("parsed packet with %d header(s)", packet.len());
 	if (verbose && !print_verbose_packet("packet", packet, reg)) return 1;
@@ -219,13 +222,13 @@ fn int run_check(String input, bool parse_only, bool verbose, Registry* reg) {
 
 fn int run_program(String input, bool parse_only, bool verbose, Registry* reg) {
 	Parser p;
-	p.init(input);
-	result::Result{Program, String} parsed = p.parse();
-	if (!parsed.is_ok) {
-		io::eprintfn("parse error: %s", parsed.error);
+	if (catch err = p.init(input)) {
+		io::eprintfn("parse error: %s", err.description);
 		return 1;
 	}
-	Program program = parsed.value;
+	Program? parsed = p.parse();
+	if (catch err = parsed) return parse_failed(&p, err);
+	Program program = parsed;
 
 	io::printfn("parsed program with %d variable(s)", program.variables.len());
 	if (verbose && !print_verbose_program(program, reg)) return 1;
@@ -234,11 +237,7 @@ fn int run_program(String input, bool parse_only, bool verbose, Registry* reg) {
 	Checker checker = checker::checker_with_registry(reg);
 	bool ok = true;
 	foreach (variable : program.variables) {
-		ScalarValue? value = ast::evaluate(variable.expression);
-		if (catch value) {
-			io::printfn("variable %s: non-packet expression (skipped check)", variable.name);
-			continue;
-		}
+		ScalarValue value = ast::evaluate(variable.expression);
 		if (value.kind != ScalarKind.PACKET) {
 			io::printfn("variable %s: non-packet expression (skipped check)", variable.name);
 			continue;
@@ -311,38 +310,35 @@ fn int file_mode_inline(String inline_expr, generator::MaybeCount count, String 
 	if (expr.starts_with("PACKET:")) expr = expr["PACKET:".len..].trim();
 
 	Parser p;
-	p.init(expr);
-	result::Result{Packet, String} parsed = p.parse_packet();
-	if (!parsed.is_ok) {
-		io::eprintfn("parse error: %s", parsed.error);
+	if (catch err = p.init(expr)) {
+		io::eprintfn("parse error: %s", err.description);
 		return 1;
 	}
-	return run_file_mode(parsed.value, count, output_path, verbose, reg);
+	Packet? parsed = p.parse_packet();
+	if (catch err = parsed) return parse_failed(&p, err);
+	return run_file_mode(parsed, count, output_path, verbose, reg);
 }
 
 fn int file_mode_file(String content, generator::MaybeCount cli_count, String output_path, bool verbose, Registry* reg) {
 	Parser p;
-	p.init(content);
+	if (catch err = p.init(content)) {
+		io::eprintfn("parse error: %s", err.description);
+		return 1;
+	}
 
 	if (content.contains("PACKET:")) {
-		result::Result{Program, String} parsed = p.parse();
-		if (!parsed.is_ok) {
-			io::eprintfn("parse error: %s", parsed.error);
-			return 1;
-		}
-		FileProgram file_parsed = file_program::parse(parsed.value, cli_count);
+		Program? parsed = p.parse();
+		if (catch err = parsed) return parse_failed(&p, err);
+		FileProgram file_parsed = file_program::parse(parsed, cli_count);
 		foreach (w : file_parsed.warnings) io::eprintfn("WARNING: %s", w);
 		foreach (e : file_parsed.errors) io::eprintfn("ERROR: %s", e);
 		if (!file_parsed.ok) return 1;
 		return run_file_mode(file_parsed.packet, file_parsed.packet_count, output_path, verbose, reg);
 	}
 
-	result::Result{Packet, String} parsed = p.parse_packet();
-	if (!parsed.is_ok) {
-		io::eprintfn("parse error: %s", parsed.error);
-		return 1;
-	}
-	return run_file_mode(parsed.value, cli_count, output_path, verbose, reg);
+	Packet? parsed = p.parse_packet();
+	if (catch err = parsed) return parse_failed(&p, err);
+	return run_file_mode(parsed, cli_count, output_path, verbose, reg);
 }
 
 <* Prints a fixup plan using the selected backend's checksum policy. *>
@@ -359,13 +355,13 @@ fn bool print_verbose_runtime(Program program, RunOptions options, Registry* reg
 
 fn int run_runtime_check(String content, RunOptions options, bool verbose, Registry* reg) {
 	Parser p;
-	p.init(content);
-	result::Result{Program, String} parsed = p.parse();
-	if (!parsed.is_ok) {
-		io::eprintfn("parse error: %s", parsed.error);
+	if (catch err = p.init(content)) {
+		io::eprintfn("parse error: %s", err.description);
 		return 1;
 	}
-	Program program = parsed.value;
+	Program? parsed = p.parse();
+	if (catch err = parsed) return parse_failed(&p, err);
+	Program program = parsed;
 	if (verbose && !print_verbose_runtime(program, options, reg)) return 1;
 
 	Runtime rt = runtime::runtime_with_registry(reg);
@@ -382,13 +378,13 @@ fn int run_runtime_check(String content, RunOptions options, bool verbose, Regis
 <* Parses a runtime program and dispatches live TX/capture to its backend. *>
 fn int run_live_mode(String content, String program_name, RunOptions options, bool verbose, Registry* reg) {
 	Parser p;
-	p.init(content);
-	result::Result{Program, String} parsed = p.parse();
-	if (!parsed.is_ok) {
-		io::eprintfn("parse error: %s", parsed.error);
+	if (catch err = p.init(content)) {
+		io::eprintfn("parse error: %s", err.description);
 		return 1;
 	}
-	Program program = parsed.value;
+	Program? parsed = p.parse();
+	if (catch err = parsed) return parse_failed(&p, err);
+	Program program = parsed;
 	if (verbose && !print_verbose_runtime(program, options, reg)) return 1;
 
 	Runtime rt = runtime::runtime_with_registry(reg);
