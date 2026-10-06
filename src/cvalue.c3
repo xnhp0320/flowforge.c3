@@ -218,31 +218,20 @@ fn Result{UIntRange, String} parse_uint_range(String raw, usz bit_width) {
 }
 
 macro @parse_range_list($Type, #parse_one, String #raw, usz #ctx) {
-	Result{$Type[], String} out;
 	String s = #raw.trim();
 	if (!(s.len && s[0] == '[') && !s.ends_with("]")) {
 		Result{$Type, String} first = #parse_one(s, #ctx);
-		if (!first.is_ok) {
-			out.is_ok = false;
-			out.error = first.error;
-			return out;
-		}
+		if (!first.is_ok) return (Result{$Type[], String}){ .is_ok = false, .error = first.error };
 		$Type[] one = mem::temp_array($Type, 1);
 		one[0] = first.value;
-		out.is_ok = true;
-		out.value = one;
-		return out;
+		return (Result{$Type[], String}){ .is_ok = true, .value = one };
 	}
 	if (!(s.len && s[0] == '[') || !s.ends_with("]")) {
-		out.is_ok = false;
-		out.error = string::tformat("malformed range list '%s'", #raw);
-		return out;
+		return (Result{$Type[], String}){ .is_ok = false, .error = string::tformat("malformed range list '%s'", #raw) };
 	}
 	String content = s.len >= 2 ? s[1..^2] : "";
 	if (!content.trim().len) {
-		out.is_ok = false;
-		out.error = "empty range list";
-		return out;
+		return (Result{$Type[], String}){ .is_ok = false, .error = "empty range list" };
 	}
 	List{$Type} ranges;
 	ranges.tinit();
@@ -258,24 +247,18 @@ macro @parse_range_list($Type, #parse_one, String #raw, usz #ctx) {
 			item = (usz)comma > start ? content[start..(usz)comma - 1].trim() : "";
 		}
 		if (!item.len) {
-			out.is_ok = false;
-			out.error = string::tformat("empty range at index %d", index);
-			return out;
+			return (Result{$Type[], String}){ .is_ok = false, .error = string::tformat("empty range at index %d", index) };
 		}
 		Result{$Type, String} range = #parse_one(item, #ctx);
 		if (!range.is_ok) {
-			out.is_ok = false;
-			out.error = string::tformat("invalid range at index %d: %s", index, range.error);
-			return out;
+			return (Result{$Type[], String}){ .is_ok = false, .error = string::tformat("invalid range at index %d: %s", index, range.error) };
 		}
 		ranges.push(range.value);
 		if (catch comma) break;
 		start = (usz)comma + 1;
 		index++;
 	}
-	out.is_ok = true;
-	out.value = ranges.to_tarray();
-	return out;
+	return (Result{$Type[], String}){ .is_ok = true, .value = ranges.to_tarray() };
 }
 
 fn Result{UIntRange[], String} parse_uint_ranges(String raw, usz bit_width) {
