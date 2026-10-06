@@ -8,12 +8,20 @@ struct Lexer {
 	String source;
 	usz pos;
 	Token current;
+	// Detail for the most recent lex fault (fault names are terse).
+	String last_error;
+}
+
+fn Token? Lexer.fail(&self, String message, fault err) {
+	self.last_error = message;
+	return err~;
 }
 
 fn void Lexer.init(&self, String source) {
 	self.source = source;
 	self.pos = 0;
 	self.current = { .type = TokenType.END_OF_FILE, .lexeme = source[source.len..], .position = source.len };
+	self.last_error = "";
 }
 
 fn Token Lexer.peek(&self) => self.current;
@@ -68,7 +76,7 @@ fn Token? Lexer.lex_string(&self) {
 			self.pos++;
 		}
 	}
-	return UNTERMINATED_STRING~;
+	return self.fail("unterminated string literal", UNTERMINATED_STRING);
 }
 
 fn Token? Lexer.lex_number(&self) {
@@ -114,7 +122,7 @@ fn Token? Lexer.lex_symbol(&self) {
 		case ',': type = TokenType.COMMA;
 		case '/': type = TokenType.SLASH;
 		case ':': type = TokenType.COLON;
-		default: return UNEXPECTED_CHAR~;
+		default: return self.fail(string::tformat("unexpected character: %c", c), UNEXPECTED_CHAR);
 	}
 	self.pos++;
 	return { type, lexeme_range(self.source, start, self.pos), start };

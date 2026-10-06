@@ -190,19 +190,25 @@ fn Registry*? build_registry(String headers_content) {
 	return reg;
 }
 
-<* Prints the detail of a failed parse: the parser's formatted message when it
-   recorded one, otherwise the fault description (e.g. lexer faults). *>
+<* Prints the detail of a failed parse: the parser's formatted message and
+   source offset when it recorded one, then the lexer's detail, and finally
+   the bare fault description. Also covers init faults (lexer-only). *>
 fn int parse_failed(Parser* p, fault err) {
-	io::eprintfn("parse error: %s", p.last_error.message.len ? p.last_error.message : err.description);
+	if (p.last_error.message.len) {
+		io::eprintfn("parse error (offset %d): %s", p.last_error.position, p.last_error.message);
+	}
+	else if (p.lexer.last_error.len) {
+		io::eprintfn("parse error: %s", p.lexer.last_error);
+	}
+	else {
+		io::eprintfn("parse error: %s", err.description);
+	}
 	return 1;
 }
 
 fn int run_check(String input, bool parse_only, bool verbose, Registry* reg) {
 	Parser p;
-	if (catch err = p.init(input)) {
-		io::eprintfn("parse error: %s", err.description);
-		return 1;
-	}
+	if (catch err = p.init(input)) return parse_failed(&p, err);
 	Packet? parsed = p.parse_packet();
 	if (catch err = parsed) return parse_failed(&p, err);
 	Packet packet = parsed;
@@ -222,10 +228,7 @@ fn int run_check(String input, bool parse_only, bool verbose, Registry* reg) {
 
 fn int run_program(String input, bool parse_only, bool verbose, Registry* reg) {
 	Parser p;
-	if (catch err = p.init(input)) {
-		io::eprintfn("parse error: %s", err.description);
-		return 1;
-	}
+	if (catch err = p.init(input)) return parse_failed(&p, err);
 	Program? parsed = p.parse();
 	if (catch err = parsed) return parse_failed(&p, err);
 	Program program = parsed;
@@ -310,10 +313,7 @@ fn int file_mode_inline(String inline_expr, generator::MaybeCount count, String 
 	if (expr.starts_with("PACKET:")) expr = expr["PACKET:".len..].trim();
 
 	Parser p;
-	if (catch err = p.init(expr)) {
-		io::eprintfn("parse error: %s", err.description);
-		return 1;
-	}
+	if (catch err = p.init(expr)) return parse_failed(&p, err);
 	Packet? parsed = p.parse_packet();
 	if (catch err = parsed) return parse_failed(&p, err);
 	return run_file_mode(parsed, count, output_path, verbose, reg);
@@ -321,10 +321,7 @@ fn int file_mode_inline(String inline_expr, generator::MaybeCount count, String 
 
 fn int file_mode_file(String content, generator::MaybeCount cli_count, String output_path, bool verbose, Registry* reg) {
 	Parser p;
-	if (catch err = p.init(content)) {
-		io::eprintfn("parse error: %s", err.description);
-		return 1;
-	}
+	if (catch err = p.init(content)) return parse_failed(&p, err);
 
 	if (content.contains("PACKET:")) {
 		Program? parsed = p.parse();
@@ -355,10 +352,7 @@ fn bool print_verbose_runtime(Program program, RunOptions options, Registry* reg
 
 fn int run_runtime_check(String content, RunOptions options, bool verbose, Registry* reg) {
 	Parser p;
-	if (catch err = p.init(content)) {
-		io::eprintfn("parse error: %s", err.description);
-		return 1;
-	}
+	if (catch err = p.init(content)) return parse_failed(&p, err);
 	Program? parsed = p.parse();
 	if (catch err = parsed) return parse_failed(&p, err);
 	Program program = parsed;
@@ -378,10 +372,7 @@ fn int run_runtime_check(String content, RunOptions options, bool verbose, Regis
 <* Parses a runtime program and dispatches live TX/capture to its backend. *>
 fn int run_live_mode(String content, String program_name, RunOptions options, bool verbose, Registry* reg) {
 	Parser p;
-	if (catch err = p.init(content)) {
-		io::eprintfn("parse error: %s", err.description);
-		return 1;
-	}
+	if (catch err = p.init(content)) return parse_failed(&p, err);
 	Program? parsed = p.parse();
 	if (catch err = parsed) return parse_failed(&p, err);
 	Program program = parsed;

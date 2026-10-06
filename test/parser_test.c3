@@ -238,6 +238,7 @@ fn void test_parser_invalid_input() @test {
 	p.init("Ether(dst=\"unclosed)")!!;
 	Packet? parsed = p.parse_packet();
 	if (try parsed) unreachable("expected parse to fail");
+	assert(p.lexer.last_error.contains("unterminated"));
 }
 
 fn void test_parser_operator_slash() @test {

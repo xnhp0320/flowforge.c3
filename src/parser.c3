@@ -25,7 +25,7 @@ fn void? Parser.init(&self, String input) {
 	self.lexer.next()!;
 }
 
-fn void? Parser.fail(&self, String message, usz position) @private {
+fn void? Parser.fail(&self, String message, usz position) {
 	self.last_error = { .message = message, .position = position };
 	return PARSE_ERROR~;
 }

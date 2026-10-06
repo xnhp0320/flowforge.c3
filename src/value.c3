@@ -26,8 +26,12 @@ fn MacAddr? mac_parse(String s) {
 	char[6] bytes;
 	for (usz i = 0; i < 6; i++) {
 		usz base = i * 3;
-		char high = hex_val(s[base])!;
-		char low = hex_val(s[base + 1])!;
+		char? high_opt = hex_val(s[base]);
+		char? low_opt = hex_val(s[base + 1]);
+		if (catch high_opt) return INVALID_MAC~;
+		if (catch low_opt) return INVALID_MAC~;
+		char high = high_opt;
+		char low = low_opt;
 		if (i < 5 && s[base + 2] != ':') return INVALID_MAC~;
 		bytes[i] = (char)((high << 4) | low);
 	}

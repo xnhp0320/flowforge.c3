@@ -497,8 +497,9 @@ fn String? Registry.failing_type_message(&self, String type_name) {
 	return message;
 }
 
-<* Frees the registry and every allocation made from its allocator
-   (per-protocol attr sets/maps, header spec arrays, inference rule lists). *>
+<* Frees the registry and the allocations it owns (per-protocol attr sets/maps,
+   header spec arrays, inference rule lists). Registered name/type strings stay
+   caller-owned. *>
 fn void Registry.free(&self) {
 	foreach (protocol : self.attr_names.tkeys()) {
 		self.attr_names.get_ref(protocol)!!.free();
