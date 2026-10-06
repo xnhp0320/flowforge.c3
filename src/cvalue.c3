@@ -217,42 +217,39 @@ fn Result{UIntRange, String} parse_uint_range(String raw, usz bit_width) {
 	return result::ok({ .first = v.value, .last = v.value });
 }
 
-fn sz? find_range_list_comma(String content, usz start) {
-	int modifier_depth = 0;
-	for (usz index = start; index < content.len; index++) {
-		if (content[index] == '(') {
-			modifier_depth++;
-		}
-		else if (content[index] == ')' && modifier_depth > 0) {
-			modifier_depth--;
-		}
-		else if (content[index] == ',' && modifier_depth == 0) {
-			return (sz)index;
-		}
-	}
-	return PARSE_ERR~;
-}
-
-fn Result{UIntRange[], String} parse_uint_ranges(String raw, usz bit_width) {
-	String s = raw.trim();
+macro @parse_range_list($Type, #parse_one, String #raw, usz #ctx) {
+	Result{$Type[], String} out;
+	String s = #raw.trim();
 	if (!(s.len && s[0] == '[') && !s.ends_with("]")) {
-		Result{UIntRange, String} range = parse_uint_range(s, bit_width);
-		if (!range.is_ok) return result::err(range.error);
-		UIntRange[] one = mem::temp_array(UIntRange, 1);
-		one[0] = range.value;
-		return result::ok(one);
+		Result{$Type, String} first = #parse_one(s, #ctx);
+		if (!first.is_ok) {
+			out.is_ok = false;
+			out.error = first.error;
+			return out;
+		}
+		$Type[] one = mem::temp_array($Type, 1);
+		one[0] = first.value;
+		out.is_ok = true;
+		out.value = one;
+		return out;
 	}
 	if (!(s.len && s[0] == '[') || !s.ends_with("]")) {
-		return result::err(string::tformat("malformed range list '%s'", raw));
+		out.is_ok = false;
+		out.error = string::tformat("malformed range list '%s'", #raw);
+		return out;
 	}
 	String content = s.len >= 2 ? s[1..^2] : "";
-	if (!content.trim().len) return result::err("empty range list");
-	List{UIntRange} ranges;
+	if (!content.trim().len) {
+		out.is_ok = false;
+		out.error = "empty range list";
+		return out;
+	}
+	List{$Type} ranges;
 	ranges.tinit();
 	usz start = 0;
 	usz index = 0;
 	while (start <= content.len) {
-		sz? comma = find_range_list_comma(content, start);
+		sz? comma = content.index_of_char_from(',', (sz)start);
 		String item;
 		if (catch comma) {
 			item = content[start..].trim();
@@ -261,18 +258,34 @@ fn Result{UIntRange[], String} parse_uint_ranges(String raw, usz bit_width) {
 			item = (usz)comma > start ? content[start..(usz)comma - 1].trim() : "";
 		}
 		if (!item.len) {
-			return result::err(string::tformat("empty range at index %d", index));
+			out.is_ok = false;
+			out.error = string::tformat("empty range at index %d", index);
+			return out;
 		}
-		Result{UIntRange, String} range = parse_uint_range(item, bit_width);
+		Result{$Type, String} range = #parse_one(item, #ctx);
 		if (!range.is_ok) {
-			return result::err(string::tformat("invalid range at index %d: %s", index, range.error));
+			out.is_ok = false;
+			out.error = string::tformat("invalid range at index %d: %s", index, range.error);
+			return out;
 		}
 		ranges.push(range.value);
 		if (catch comma) break;
 		start = (usz)comma + 1;
 		index++;
 	}
-	return result::ok(ranges.to_tarray());
+	out.is_ok = true;
+	out.value = ranges.to_tarray();
+	return out;
+}
+
+fn Result{UIntRange[], String} parse_uint_ranges(String raw, usz bit_width) {
+	return @parse_range_list(UIntRange, parse_uint_range, raw, bit_width);
+}
+
+fn Result{IPv4Range, String} parse_ipv4_range_item(String raw, usz ctx) @private => parse_ipv4_range(raw);
+
+fn Result{IPv4Range[], String} parse_ipv4_ranges(String raw) {
+	return @parse_range_list(IPv4Range, parse_ipv4_range_item, raw, 0);
 }
 
 fn Result{int, String} parse_prefix(String s, int max_prefix) {
@@ -396,86 +409,8 @@ fn Result{IPv6Range, String} parse_ipv6_range(String raw) {
 	return result::ok({ .first = ip, .last = ip });
 }
 
-fn Result{IPv4Range[], String} parse_ipv4_ranges(String raw) {
-	String s = raw.trim();
-	if (!(s.len && s[0] == '[') && !s.ends_with("]")) {
-		Result{IPv4Range, String} range = parse_ipv4_range(s);
-		if (!range.is_ok) return result::err(range.error);
-		IPv4Range[] one = mem::temp_array(IPv4Range, 1);
-		one[0] = range.value;
-		return result::ok(one);
-	}
-	if (!(s.len && s[0] == '[') || !s.ends_with("]")) {
-		return result::err(string::tformat("malformed range list '%s'", raw));
-	}
-	String content = s.len >= 2 ? s[1..^2] : "";
-	if (!content.trim().len) return result::err("empty range list");
-	List{IPv4Range} ranges;
-	ranges.tinit();
-	usz start = 0;
-	usz index = 0;
-	while (start <= content.len) {
-		sz? comma = find_range_list_comma(content, start);
-		String item;
-		if (catch comma) {
-			item = content[start..].trim();
-		}
-		else {
-			item = (usz)comma > start ? content[start..(usz)comma - 1].trim() : "";
-		}
-		if (!item.len) {
-			return result::err(string::tformat("empty range at index %d", index));
-		}
-		Result{IPv4Range, String} range = parse_ipv4_range(item);
-		if (!range.is_ok) {
-			return result::err(string::tformat("invalid range at index %d: %s", index, range.error));
-		}
-		ranges.push(range.value);
-		if (catch comma) break;
-		start = (usz)comma + 1;
-		index++;
-	}
-	return result::ok(ranges.to_tarray());
-}
+fn Result{IPv6Range, String} parse_ipv6_range_item(String raw, usz ctx) @private => parse_ipv6_range(raw);
 
 fn Result{IPv6Range[], String} parse_ipv6_ranges(String raw) {
-	String s = raw.trim();
-	if (!(s.len && s[0] == '[') && !s.ends_with("]")) {
-		Result{IPv6Range, String} range = parse_ipv6_range(s);
-		if (!range.is_ok) return result::err(range.error);
-		IPv6Range[] one = mem::temp_array(IPv6Range, 1);
-		one[0] = range.value;
-		return result::ok(one);
-	}
-	if (!(s.len && s[0] == '[') || !s.ends_with("]")) {
-		return result::err(string::tformat("malformed range list '%s'", raw));
-	}
-	String content = s.len >= 2 ? s[1..^2] : "";
-	if (!content.trim().len) return result::err("empty range list");
-	List{IPv6Range} ranges;
-	ranges.tinit();
-	usz start = 0;
-	usz index = 0;
-	while (start <= content.len) {
-		sz? comma = find_range_list_comma(content, start);
-		String item;
-		if (catch comma) {
-			item = content[start..].trim();
-		}
-		else {
-			item = (usz)comma > start ? content[start..(usz)comma - 1].trim() : "";
-		}
-		if (!item.len) {
-			return result::err(string::tformat("empty range at index %d", index));
-		}
-		Result{IPv6Range, String} range = parse_ipv6_range(item);
-		if (!range.is_ok) {
-			return result::err(string::tformat("invalid range at index %d: %s", index, range.error));
-		}
-		ranges.push(range.value);
-		if (catch comma) break;
-		start = (usz)comma + 1;
-		index++;
-	}
-	return result::ok(ranges.to_tarray());
+	return @parse_range_list(IPv6Range, parse_ipv6_range_item, raw, 0);
 }

@@ -8,10 +8,11 @@ import std::io;
 import std::os;
 
 struct CheckResult {
-	bool ok;
 	List{String} warnings;
 	List{String} errors;
 }
+
+fn bool CheckResult.ok(&self) => self.errors.len() == 0;
 
 fn void CheckResult.tinit(&self) {
 	self.warnings.tinit();
@@ -26,12 +27,10 @@ struct Checker {
 fn CheckResult Checker.check(&self, Packet packet) {
 	CheckResult result;
 	result.tinit();
-	result.ok = true;
 
 	foreach (header : packet) {
 		if (!self.registry.has_header(header.protocol)) {
 			result.errors.push(string::tformat("unknown header: '%s'", header.protocol));
-			result.ok = false;
 			continue;
 		}
 
@@ -45,13 +44,11 @@ fn CheckResult Checker.check(&self, Packet packet) {
 			if (catch expr) continue;
 
 			String? type_name = self.registry.attr_type(header.protocol, attr.name);
-			ScalarValue? value = ast::evaluate(expr);
-			if (catch value) continue;
+			ScalarValue value = ast::evaluate(expr);
 
 			if (catch type_name) {
 				if (value.kind == ScalarKind.PACKET) {
 					CheckResult nested = self.check(value.packet_val);
-					result.ok = result.ok && nested.ok;
 					foreach (w : nested.warnings) result.warnings.push(w);
 					foreach (e : nested.errors) result.errors.push(e);
 				}
@@ -60,7 +57,6 @@ fn CheckResult Checker.check(&self, Packet packet) {
 
 			if (value.kind == ScalarKind.PACKET) {
 				result.errors.push(string::tformat("attribute '%s' in header '%s' requires a scalar value", attr.name, header.protocol));
-				result.ok = false;
 				continue;
 			}
 
@@ -69,12 +65,10 @@ fn CheckResult Checker.check(&self, Packet packet) {
 				Result{bool, String} valid = validate::validate_scalar_type(type_name, value);
 				if (!valid.is_ok) {
 					result.errors.push(string::tformat("invalid '%s' in header '%s': %s", attr.name, header.protocol, valid.error));
-					result.ok = false;
 				}
 			}
 			else {
 				result.errors.push(string::tformat("invalid '%s' in header '%s': %s", attr.name, header.protocol, failing));
-				result.ok = false;
 			}
 		}
 	}
@@ -86,7 +80,7 @@ fn void Checker.validate_or_exit(&self, Packet packet) {
 	CheckResult result = self.check(packet);
 	foreach (w : result.warnings) io::eprintfn("WARNING: %s", w);
 	foreach (e : result.errors) io::eprintfn("ERROR: %s", e);
-	if (!result.ok) {
+	if (!result.ok()) {
 		os::exit(1);
 	}
 	if (result.warnings.len()) {

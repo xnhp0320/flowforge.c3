@@ -214,7 +214,7 @@ fn int run_check(String input, bool parse_only, bool verbose, Registry* reg) {
 	CheckResult result = checker::checker_with_registry(reg).check(packet);
 	foreach (w : result.warnings) io::eprintfn("WARNING: %s", w);
 	foreach (e : result.errors) io::eprintfn("ERROR: %s", e);
-	if (!result.ok) return 1;
+	if (!result.ok()) return 1;
 	if (result.warnings.len()) io::eprintfn("%d warning(s) found.", result.warnings.len());
 	io::printn("check ok");
 	return 0;
@@ -245,7 +245,7 @@ fn int run_program(String input, bool parse_only, bool verbose, Registry* reg) {
 		CheckResult result = checker.check(value.packet_val);
 		foreach (w : result.warnings) io::eprintfn("WARNING: %s", w);
 		foreach (e : result.errors) io::eprintfn("ERROR: %s", e);
-		ok = ok && result.ok;
+		ok = ok && result.ok();
 	}
 	return ok ? 0 : 1;
 }

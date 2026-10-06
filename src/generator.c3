@@ -60,7 +60,7 @@ fn PacketGenerationResult PacketGenerator.prepare(&self, Packet packet, MaybeCou
 	CheckResult check = checker.check(packet);
 	foreach (w : check.warnings) result.warnings.push(w);
 	foreach (e : check.errors) result.errors.push(e);
-	if (!check.ok) {
+	if (!check.ok()) {
 		return result;
 	}
 

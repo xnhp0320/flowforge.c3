@@ -1136,7 +1136,7 @@ fn Result Runtime.init(&self, Program program, String eal_program_name) {
 		CheckResult check = checker.check(config.packet);
 		append_strings(&result.warnings, check.warnings);
 		append_strings(&result.errors, check.errors);
-		if (!check.ok) {
+		if (!check.ok()) {
 			return result;
 		}
 	}
