@@ -2,6 +2,21 @@
 
 Review date: 2026-10-06. Whole-project review (9,670 lines: src/ 19 files, test/ 12 files) for non-idiomatic C3, against c3-lang.org conventions.
 
+## Status (branch `refactor/c3-faults`)
+
+**Done — fault migration (front-end + value layer):**
+- lexer/parser/ast converted to `T?` fault returns with `!` rethrow; parser detail via `last_error` side channel; `Parser.init` no longer drops priming errors
+- cvalue range-list parsers deduped via `@parse_range_list` macro (kept `Result{T,String}` deliberately: checker tests pin detailed messages, faults carry no payload)
+- validate collapsed from 11 public fns to `validate_scalar_type` (dead wrappers/aliases removed)
+- checker `CheckResult.ok` flag → derived `ok()` method
+- registry: double/triple map lookups fixed; `Registry.free` now frees inner allocations (was leaking per-spec arrays); `register_inference_rule` `bool?` → `void?`
+- file_program: catch-and-bool optional handling → `try`/provably-valid pointer
+- value: `hex_val` `-1` sentinel → `char?` fault
+
+**Deliberately not converted to faults** (recorded rationale): cvalue/validate keep `Result{T,String}` — detailed diagnostics are their payload and checker tests assert message content; constructor/generator/serializer/runtime keep their aggregation structs (`BuildResult`, `SerializeResult`, `Result`) for the same reason; those structs' internal leaf fns are future work.
+
+**Still open:** serializer fixup-block duplication + uint128; runtime_live `defer`/fault rework + atomic stop flag; CLI arg parsing dedup; dpdk extern wrapping; test boilerplate macros; apply_flow*/dup_*_ranges dedup; `--capture` ambiguity; pcap fault usage.
+
 ## Executive summary
 
 **Systemic issue (touches ~every file):** the project reinvents error handling instead of using C3 faults. Fallible functions return `std::collections::result::Result{T, String}` and every call site pays a 2-line rewrap tax (`if (!r.is_ok) return result::err(r.error)`). Faults (`fn T! f()`, `?`, `if (catch)`) are typed, matchable via `@catch`, and allocation-free; `string::tformat` errors allocate even when only tested ok/fail. Sub-patterns: `Result{bool, String}` with a phantom `true` payload (should be `void!`); `bool ok` flags duplicating `errors.len() == 0`; bool + `List{String}*` out-param error lists; sentinel returns (-1 / 0 / null meaning "error").

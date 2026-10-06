@@ -190,7 +190,7 @@ fn void Registry.register_header_fields(&self, String protocol, FieldInput[] fie
 
 faultdef INFERENCE_ERR;
 
-fn bool? Registry.register_inference_rule(&self, String parent_header, String child_header, String target_field, ConstructorValue value) {
+fn void? Registry.register_inference_rule(&self, String parent_header, String child_header, String target_field, ConstructorValue value) {
 	HeaderSpec*? parent_spec = self.header_specs.get_ref(parent_header);
 	if (catch parent_spec) return INFERENCE_ERR~;
 	if (!self.header_specs.has_key(child_header)) return INFERENCE_ERR~;
@@ -208,19 +208,23 @@ fn bool? Registry.register_inference_rule(&self, String parent_header, String ch
 	if (!valid.is_ok) return INFERENCE_ERR~;
 
 	String key = inference_key(parent_header, child_header);
-	if (!self.inference_rules.has_key(key)) {
-		List{InferenceRule} rules;
-		rules.init(self.allocator);
-		self.inference_rules.set(key, rules);
+	List{InferenceRule}*? rules_opt = self.inference_rules.get_ref(key);
+	List{InferenceRule}* rules;
+	if (try rules_opt) {
+		rules = rules_opt;
 	}
-	List{InferenceRule}* rules = self.inference_rules.get_ref(key)!!;
+	else {
+		List{InferenceRule} created;
+		created.init(self.allocator);
+		self.inference_rules.set(key, created);
+		rules = self.inference_rules.get_ref(key)!!;
+	}
 	rules.push({
 		.parent_header = parent_header,
 		.child_header = child_header,
 		.target_field = target_field,
 		.value = value,
 	});
-	return true;
 }
 
 fn String inference_key(String parent, String child) {
@@ -468,18 +472,19 @@ fn Registry create_empty_registry() {
 fn bool Registry.has_header(&self, String protocol) => self.attr_names.has_key(protocol);
 
 fn bool Registry.has_attr(&self, String protocol, String attr) {
-	if (!self.attr_names.has_key(protocol)) return false;
-	StringSet names = self.attr_names.get(protocol)!!;
+	StringSet? names = self.attr_names.get(protocol);
+	if (catch names) return false;
 	return names.contains(attr);
 }
 
 faultdef NO_ATTR;
 
 fn String? Registry.attr_type(&self, String protocol, String attr) {
-	if (!self.attr_types.has_key(protocol)) return NO_ATTR~;
-	StringMap types = self.attr_types.get(protocol)!!;
-	if (!types.has_key(attr)) return NO_ATTR~;
-	return types.get(attr);
+	StringMap? types = self.attr_types.get(protocol);
+	if (catch types) return NO_ATTR~;
+	String? type = types.get(attr);
+	if (catch type) return NO_ATTR~;
+	return type;
 }
 
 fn void Registry.add_failing_type(&self, String type_name, String message) {
@@ -487,11 +492,28 @@ fn void Registry.add_failing_type(&self, String type_name, String message) {
 }
 
 fn String? Registry.failing_type_message(&self, String type_name) {
-	if (!self.failing_types.has_key(type_name)) return NO_ATTR~;
-	return self.failing_types.get(type_name);
+	String? message = self.failing_types.get(type_name);
+	if (catch message) return NO_ATTR~;
+	return message;
 }
 
+<* Frees the registry and every allocation made from its allocator
+   (per-protocol attr sets/maps, header spec arrays, inference rule lists). *>
 fn void Registry.free(&self) {
+	foreach (protocol : self.attr_names.tkeys()) {
+		self.attr_names.get_ref(protocol)!!.free();
+	}
+	foreach (protocol : self.attr_types.tkeys()) {
+		self.attr_types.get_ref(protocol)!!.free();
+	}
+	foreach (protocol : self.header_specs.tkeys()) {
+		HeaderSpec* spec = self.header_specs.get_ref(protocol)!!;
+		alloc::free(self.allocator, spec.fields.ptr);
+		alloc::free(self.allocator, spec.options.ptr);
+	}
+	foreach (key : self.inference_rules.tkeys()) {
+		self.inference_rules.get_ref(key)!!.free();
+	}
 	self.attr_names.free();
 	self.attr_types.free();
 	self.failing_types.free();

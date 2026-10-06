@@ -40,8 +40,7 @@ fn FileProgram parse(Program program, generator::MaybeCount cli_packet_count = {
 		variables.set(variable.name, variable);
 	}
 
-	Variable*? packet_var = variables.get("PACKET");
-	if (catch packet_var) {
+	if (catch variables.get("PACKET")) {
 		result.errors.push("missing mandatory variable 'PACKET'");
 	}
 
@@ -55,29 +54,30 @@ fn FileProgram parse(Program program, generator::MaybeCount cli_packet_count = {
 
 	if (result.errors.len()) return result;
 
-	// packet_var is present: missing PACKET already returned above.
-	ScalarValue? packet_value = ast::evaluate(packet_var.expression);
-	if (catch packet_value) {
+	// Missing PACKET was reported above; here the pointer is known present.
+	Variable* packet_var = variables.get("PACKET")!!;
+	ScalarValue packet_value = ast::evaluate(packet_var.expression);
+	if (packet_value.kind != ScalarKind.PACKET) {
 		result.errors.push("variable 'PACKET' must be a packet expression");
-	} else if (packet_value.kind != ScalarKind.PACKET) {
-		result.errors.push("variable 'PACKET' must be a packet expression");
-	} else {
+	}
+	else {
 		result.has_packet = true;
 		result.packet = packet_value.packet_val;
 	}
 
-	if (has_count_var) {
-		ScalarValue? count_value = ast::evaluate(count_var.expression);
-		if (catch count_value) {
+	if (try count_var) {
+		ScalarValue count_value = ast::evaluate(count_var.expression);
+		if (count_value.kind != ScalarKind.INTEGER) {
 			result.errors.push("variable 'PACKET_COUNT' must be an integer expression");
-		} else if (count_value.kind != ScalarKind.INTEGER) {
-			result.errors.push("variable 'PACKET_COUNT' must be an integer expression");
-		} else if (count_value.int_val <= 0) {
+		}
+		else if (count_value.int_val <= 0) {
 			result.errors.push("variable 'PACKET_COUNT' must be positive");
-		} else {
+		}
+		else {
 			result.packet_count.set((ulong)count_value.int_val);
 		}
-	} else {
+	}
+	else {
 		result.packet_count = cli_packet_count;
 	}
 
