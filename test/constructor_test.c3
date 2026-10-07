@@ -486,7 +486,7 @@ fn void test_bit_ranges_normalize_range_syntax() @test {
 fn void test_range_steps_are_preserved_by_constructor() @test {
 	Registry reg = registry::create_empty_registry();
 	reg.register_header("MyHdr", { registry::fld("field", "b16_ranges") });
-	BuildResult result = build_with(`MyHdr(field="[1-10(step=2), 20-30(step = 3)]")`, &reg);
+	BuildResult result = testutil::build_with(`MyHdr(field="[1-10(step=2), 20-30(step = 3)]")`, &reg);
 	assert(result.ok);
 	UIntRange[] ranges = get_field(hdrs(result)[0], "field").value.uint_ranges_val;
 	assert(ranges.len == 2);
@@ -497,7 +497,7 @@ fn void test_range_steps_are_preserved_by_constructor() @test {
 }
 
 fn void test_ip_range_steps_are_preserved_by_constructor() @test {
-	BuildResult result = build_default(
+	BuildResult result = testutil::build_default(
 		`IP(src="10.0.0.1-10.0.0.10(step=2)")/IPv6(src="2001:db8::1-2001:db8::10(step=3)")`);
 	assert(result.ok);
 	PacketConstructor headers = hdrs(result);
@@ -510,7 +510,7 @@ fn void test_ip_range_steps_are_preserved_by_constructor() @test {
 fn void test_range_rand_is_preserved_by_constructor() @test {
 	Registry reg = registry::create_empty_registry();
 	reg.register_header("MyHdr", { registry::fld("field", "b16_ranges") });
-	BuildResult result = build_with(`MyHdr(field="[1-10(rand), 20-30]")`, &reg);
+	BuildResult result = testutil::build_with(`MyHdr(field="[1-10(rand), 20-30]")`, &reg);
 	assert(result.ok);
 	UIntRange[] ranges = get_field(hdrs(result)[0], "field").value.uint_ranges_val;
 	assert(ranges.len == 2);

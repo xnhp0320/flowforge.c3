@@ -254,6 +254,15 @@ fn ulong saturated_u128_count(uint128 count) {
 	return count >= (uint128)ulong::max ? ulong::max : (ulong)count;
 }
 
+fn ulong uint_range_count(UIntRange r) {
+	if (r.last - r.first == ulong::max) return ulong::max;
+	return r.last - r.first + 1;
+}
+
+fn ulong ipv4_range_count(IPv4Range r) {
+	return (ulong)(cvalue::ipv4_to_u32(r.last) - cvalue::ipv4_to_u32(r.first)) + 1;
+}
+
 fn ulong range_step(Maybe{ulong} step) {
 	return step.has_value ? step.value : 1;
 }
@@ -267,6 +276,8 @@ fn ulong gcd_u128_ulong(uint128 left, ulong right) {
 		b = remainder;
 	}
 	return (ulong)a;
+}
+
 fn uint128 ipv6_to_u128(IPv6 ip) {
 	uint128 v = 0;
 	for (usz i = 0; i < 16; i++) {
@@ -363,6 +374,8 @@ fn ulong total_ipv6_patch_count(IPv6PatchRange[] ranges) {
 	ulong total = 0;
 	foreach (range : ranges) total = saturated_add_count(total, range.count);
 	return total;
+}
+
 macro ulong @total_value_count(#ranges, #count_fn) {
 	ulong total = 0;
 	foreach (r : #ranges) total = saturated_add_count(total, #count_fn(r));
@@ -437,7 +450,6 @@ fn IPv6 add_ipv6_offset(IPv6 ip, ulong offset) {
 fn IPv6 add_ipv6_traversal_offset(IPv6 ip, ulong index, IPv6PatchRange range) {
 	uint128 offset = range_traversal_offset(index, range.length, range.full_domain, range.traversal);
 	return u128_to_ipv6(ipv6_to_u128(ip) + offset);
-}
 }
 
 // --- PayloadFieldModifier ----------------------------------------------
@@ -546,10 +558,6 @@ fn UIntPatchRange[] make_uint_patch_ranges(UIntRange[] src) {
 		};
 	}
 	return dst;
-}
-
-fn UIntPatchRange[] make_uint_patch_ranges(UIntRange[] src) {
-	return @make_patch_ranges(UIntPatchRange, src, uint_range_count, patch_first_uint);
 }
 
 fn IPv4PatchRange[] make_ipv4_patch_ranges(IPv4Range[] src) {

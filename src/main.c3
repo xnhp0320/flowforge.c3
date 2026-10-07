@@ -594,12 +594,15 @@ fn int main(String[] args) {
 	// Inspect parsed variables so comments and string contents cannot select
 	// a live backend. DPDK_ARGS without BACKEND remains a legacy DPDK program.
 	Parser mode_parser;
-	mode_parser.init(content);
-	result::Result{Program, String} mode_program = mode_parser.parse();
+	if (catch err = mode_parser.init(content)) {
+		io::eprintfn("parse error: %s", err.description);
+		return 1;
+	}
+	Program? mode_program = mode_parser.parse();
 	bool runtime_program = false;
 	bool packet_program = false;
-	if (mode_program.is_ok) {
-		foreach (variable : mode_program.value.variables) {
+	if (try mode_program) {
+		foreach (variable : mode_program.variables) {
 			if (variable.name == "BACKEND" || variable.name == "DPDK_ARGS") runtime_program = true;
 			if (variable.name == "PACKET") packet_program = true;
 		}

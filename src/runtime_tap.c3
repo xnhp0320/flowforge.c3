@@ -116,7 +116,9 @@ fn int tap_rx_worker(void* arg) {
 						worker.stats.rx_received++;
 						worker.stats.rx_bytes += (ulong)size;
 						active = true;
-						if (worker.writer != null && !worker.writer.write_packet(buffer[:size]).ok) { worker.error = -1; break; }
+						if (worker.writer != null) {
+							if (catch err = worker.writer.write_packet(buffer[:size])) { worker.error = -1; break; }
+						}
 					}
 				}
 			};
@@ -189,7 +191,7 @@ fn Result Runtime.run_tap(&self, Program program, RunOptions options) {
 		output = file;
 		have_output = true;
 		writer = { .output = &output };
-		if (!writer.write_header().ok) {
+		if (catch err = writer.write_header()) {
 			result.errors.push("failed to write pcap header");
 			return result;
 		}

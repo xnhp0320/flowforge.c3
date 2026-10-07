@@ -223,7 +223,7 @@ fn void test_serializes_first_bit_range_value_into_base_payload() @test {
 fn void test_integer_range_step_counts_and_applies_values() @test {
 	Registry reg = registry::create_empty_registry();
 	reg.register_header("MyHdr", { registry::fld("field", "b16_ranges") });
-	BuildResult built = build_with(`MyHdr(field="[1-100(step=2)]")`, &reg);
+	BuildResult built = testutil::build_with(`MyHdr(field="[1-100(step=2)]")`, &reg);
 	assert(built.ok);
 	char[2] buf;
 	SerializeResult result = serializer::serialize_packet(built.packet, &reg, buf[..]);
@@ -243,7 +243,7 @@ fn void test_integer_range_step_counts_and_applies_values() @test {
 fn void test_range_step_walks_all_congruence_groups() @test {
 	Registry reg = registry::create_empty_registry();
 	reg.register_header("MyHdr", { registry::fld("field", "b16_ranges") });
-	BuildResult built = build_with(`MyHdr(field="1-10(step=4)")`, &reg);
+	BuildResult built = testutil::build_with(`MyHdr(field="1-10(step=4)")`, &reg);
 	assert(built.ok);
 	char[2] buf;
 	SerializeResult result = serializer::serialize_packet(built.packet, &reg, buf[..]);
@@ -260,7 +260,7 @@ fn void test_range_step_walks_all_congruence_groups() @test {
 fn void test_mixed_range_list_uses_each_ranges_step() @test {
 	Registry reg = registry::create_empty_registry();
 	reg.register_header("MyHdr", { registry::fld("field", "b16_ranges") });
-	BuildResult built = build_with(`MyHdr(field="[1-5, 10-15(step=2)]")`, &reg);
+	BuildResult built = testutil::build_with(`MyHdr(field="[1-5, 10-15(step=2)]")`, &reg);
 	assert(built.ok);
 	char[2] buf;
 	SerializeResult result = serializer::serialize_packet(built.packet, &reg, buf[..]);
@@ -281,7 +281,7 @@ fn void test_mixed_range_list_uses_each_ranges_step() @test {
 fn void test_range_step_traverses_complete_range_when_step_exceeds_span() @test {
 	Registry reg = registry::create_empty_registry();
 	reg.register_header("MyHdr", { registry::fld("field", "b16_ranges") });
-	BuildResult built = build_with(`MyHdr(field="[1-5(step=2), 10-12(step=100)]")`, &reg);
+	BuildResult built = testutil::build_with(`MyHdr(field="[1-5(step=2), 10-12(step=100)]")`, &reg);
 	assert(built.ok);
 	char[2] buf;
 	SerializeResult result = serializer::serialize_packet(built.packet, &reg, buf[..]);
@@ -301,7 +301,7 @@ fn void test_range_step_traverses_complete_range_when_step_exceeds_span() @test 
 fn void test_unit_step_ranges_use_sequential_traversal() @test {
 	Registry reg = registry::create_empty_registry();
 	reg.register_header("MyHdr", { registry::fld("field", "b16_ranges") });
-	BuildResult built = build_with(`MyHdr(field="[1-3, 10-12(step=1)]")`, &reg);
+	BuildResult built = testutil::build_with(`MyHdr(field="[1-3, 10-12(step=1)]")`, &reg);
 	assert(built.ok);
 	char[2] buf;
 	SerializeResult result = serializer::serialize_packet(built.packet, &reg, buf[..]);
@@ -317,7 +317,7 @@ fn void test_unit_step_ranges_use_sequential_traversal() @test {
 fn void test_rand_ranges_apply_values_within_each_range() @test {
 	Registry reg = registry::create_empty_registry();
 	reg.register_header("MyHdr", { registry::fld("field", "b16_ranges") });
-	BuildResult built = build_with(`MyHdr(field="[10-12(rand), 100-101(rand)]")`, &reg);
+	BuildResult built = testutil::build_with(`MyHdr(field="[10-12(rand), 100-101(rand)]")`, &reg);
 	assert(built.ok);
 	char[2] buf;
 	SerializeResult result = serializer::serialize_packet(built.packet, &reg, buf[..]);
@@ -339,7 +339,7 @@ fn void test_rand_ranges_apply_values_within_each_range() @test {
 }
 
 fn void test_rand_ip_ranges_apply_values_within_bounds() @test {
-	BuildResult built = build_default(
+	BuildResult built = testutil::build_default(
 		`IP(src="10.0.0.10-10.0.0.12(rand)")/IPv6(src="2001:db8::10-2001:db8::12(rand)")`);
 	assert(built.ok);
 	char[60] buf;
@@ -353,13 +353,13 @@ fn void test_rand_ip_ranges_apply_values_within_bounds() @test {
 		assert(applied4.is_ok);
 		uint address4 = (uint)u16_at(buf[..], 12) << 16 | (uint)u16_at(buf[..], 14);
 		assert(applied4.value == (uint128)address4);
-		assert(byte_at(buf[..], 15) >= 10 && byte_at(buf[..], 15) <= 12);
+		assert(testutil::byte_at(buf[..], 15) >= 10 && testutil::byte_at(buf[..], 15) <= 12);
 		Result{uint128, String} applied6 = modifier6.apply(buf[..], index);
 		assert(applied6.is_ok);
 		uint128 address6 = 0;
 		foreach (b : buf[28:16]) address6 = (address6 << 8) | (uint128)b;
 		assert(applied6.value == address6);
-		assert(byte_at(buf[..], 43) >= 0x10 && byte_at(buf[..], 43) <= 0x12);
+		assert(testutil::byte_at(buf[..], 43) >= 0x10 && testutil::byte_at(buf[..], 43) <= 0x12);
 	}
 }
 
@@ -371,7 +371,7 @@ fn void test_pseudo_delta_uses_applied_addresses_for_all_traversals() @test {
 	};
 	foreach (program : programs) {
 		Registry reg = registry::create_default_registry();
-		BuildResult built = build_with(program, &reg);
+		BuildResult built = testutil::build_with(program, &reg);
 		assert(built.ok);
 		char[28] buf;
 		SerializeResult serialized = serializer::serialize_packet(built.packet, &reg, buf[..]);
@@ -393,7 +393,7 @@ fn void test_pseudo_delta_uses_applied_addresses_for_all_traversals() @test {
 }
 
 fn void test_ip_range_steps_count_and_apply_values() @test {
-	BuildResult built = build_default(
+	BuildResult built = testutil::build_default(
 		`IP(src="10.0.0.1-10.0.0.100(step=2)")/IPv6(src="2001:db8::1-2001:db8::ff(step=2)")`);
 	assert(built.ok);
 	char[60] buf;
@@ -405,17 +405,17 @@ fn void test_ip_range_steps_count_and_apply_values() @test {
 	assert(modifier4.value_count == 100);
 	assert(modifier6.value_count == 255);
 	assert(modifier4.apply(buf[..], 49).is_ok);
-	assert(byte_at(buf[..], 12) == 10 && byte_at(buf[..], 15) == 99);
+	assert(testutil::byte_at(buf[..], 12) == 10 && testutil::byte_at(buf[..], 15) == 99);
 	assert(modifier6.apply(buf[..], 127).is_ok);
-	assert(byte_at(buf[..], 43) == 0xff);
+	assert(testutil::byte_at(buf[..], 43) == 0xff);
 	assert(modifier4.apply(buf[..], 50).is_ok);
-	assert(byte_at(buf[..], 15) == 2);
+	assert(testutil::byte_at(buf[..], 15) == 2);
 	assert(modifier6.apply(buf[..], 254).is_ok);
-	assert(byte_at(buf[..], 43) == 0xfe);
+	assert(testutil::byte_at(buf[..], 43) == 0xfe);
 }
 
 fn void test_large_ipv6_stepped_range_saturates_count() @test {
-	BuildResult built = build_default(
+	BuildResult built = testutil::build_default(
 		`IPv6(src="::-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff(step=18446744073709551615)")`);
 	assert(built.ok);
 	char[40] buf;

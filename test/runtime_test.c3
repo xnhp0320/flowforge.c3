@@ -41,7 +41,7 @@ fn void test_jumbo_selects_large_packet_limit_and_requires_dpdk() @test {
 	assert(runtime::packet_size_limit(options) == generator::GENERATOR_MAX_PACKET_SIZE);
 
 	Runtime rt = runtime::runtime_with_default();
-	Result result = rt.check(must_parse_program(
+	Result result = rt.check(testutil::must_parse_program(
 		"BACKEND: \"tap\"\nINTERFACE: \"fftest0\"\nPACKET: Ether()"), options);
 	assert(!result.ok);
 	assert(result.errors.len() == 1);
@@ -50,7 +50,7 @@ fn void test_jumbo_selects_large_packet_limit_and_requires_dpdk() @test {
 
 fn void test_jumbo_allows_packet_larger_than_default_mbuf() @test {
 	Runtime rt = runtime::runtime_with_default();
-	Program program = must_parse_program(
+	Program program = testutil::must_parse_program(
 		"BACKEND: \"dpdk\"\nDPDK_ARGS: \"-l 0\"\nPACKET: Ether()/Payload(length=3000)");
 	Result normal = rt.check(program);
 	assert(!normal.ok);

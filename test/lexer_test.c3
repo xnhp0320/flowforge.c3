@@ -219,18 +219,18 @@ fn void test_lexer_hash_comments() @test {
 	Lexer lexer;
 	lexer.init("# file comment\nEther # header comment\n/ # separator comment\nIP# comment at EOF");
 
-	Token t = lexer.next().ok()!!;
+	Token t = lexer.next()!!;
 	assert(t.type == TokenType.IDENTIFIER);
 	assert(t.lexeme == "Ether");
 
-	t = lexer.next().ok()!!;
+	t = lexer.next()!!;
 	assert(t.type == TokenType.SLASH);
 
-	t = lexer.next().ok()!!;
+	t = lexer.next()!!;
 	assert(t.type == TokenType.IDENTIFIER);
 	assert(t.lexeme == "IP");
 
-	t = lexer.next().ok()!!;
+	t = lexer.next()!!;
 	assert(t.type == TokenType.END_OF_FILE);
 }
 
@@ -240,11 +240,11 @@ fn void test_lexer_hash_in_string_is_not_a_comment() @test {
 
 	Token t;
 	do {
-		t = lexer.next().ok()!!;
+		t = lexer.next()!!;
 	} while (t.type != TokenType.STRING_LITERAL);
 
 	assert(t.lexeme == "\"value #1\"");
 	while (t.type != TokenType.END_OF_FILE) {
-		t = lexer.next().ok()!!;
+		t = lexer.next()!!;
 	}
 }
