@@ -5,17 +5,6 @@ import flowforge::registry;
 import flowforge::value;
 import flowforge::testutil;
 
-fn BuildResult build_default(String input) {
-	Registry reg = registry::create_default_registry();
-	Packet pkt = testutil::must_parse(input);
-	return constructor::build(&reg, pkt);
-}
-
-fn BuildResult build_with(String input, Registry* reg) {
-	Packet pkt = testutil::must_parse(input);
-	return constructor::build(reg, pkt);
-}
-
 fn PacketConstructor hdrs(BuildResult r) => r.packet;
 
 fn FieldConstructor get_field(HeaderConstructor h, String name) {
@@ -45,7 +34,7 @@ fn bool registration_fails(Registry* reg, String parent, String child, String ta
 }
 
 fn void test_builds_defaults_and_offsets() @test {
-	BuildResult result = build_default("Ether()/IP()/TCP()");
+	BuildResult result = testutil::build_default("Ether()/IP()/TCP()");
 	assert(result.ok);
 	PacketConstructor p = hdrs(result);
 	assert(p.len() == 3);
@@ -68,7 +57,7 @@ fn void test_builds_defaults_and_offsets() @test {
 }
 
 fn void test_user_values_override_defaults_and_keep_order() @test {
-	BuildResult result = build_default(`IP(dst="10.0.0.1",ttl=32,src="192.168.1.1")`);
+	BuildResult result = testutil::build_default(`IP(dst="10.0.0.1",ttl=32,src="192.168.1.1")`);
 	assert(result.ok);
 	PacketConstructor p = hdrs(result);
 	assert(p.len() == 1);
@@ -93,7 +82,7 @@ fn void test_user_values_override_defaults_and_keep_order() @test {
 }
 
 fn void test_normalizes_mac_and_ranges() @test {
-	BuildResult result = build_default(`Ether(dst="ff:ff:ff:ff:ff:ff")/IP(src="[10.0.0.1, 10.0.0.0/24, 10.0.1.1-10.0.1.255]")/IPv6(src="2001:db8::/126")`);
+	BuildResult result = testutil::build_default(`Ether(dst="ff:ff:ff:ff:ff:ff")/IP(src="[10.0.0.1, 10.0.0.0/24, 10.0.1.1-10.0.1.255]")/IPv6(src="2001:db8::/126")`);
 	assert(result.ok);
 	PacketConstructor p = hdrs(result);
 
@@ -116,7 +105,7 @@ fn void test_normalizes_mac_and_ranges() @test {
 }
 
 fn void test_vlan_offsets_and_fields() @test {
-	BuildResult result = build_default("Ether()/VLAN()/IP()");
+	BuildResult result = testutil::build_default("Ether()/VLAN()/IP()");
 	assert(result.ok);
 	PacketConstructor p = hdrs(result);
 	assert(p.len() == 3);
@@ -136,7 +125,7 @@ fn void test_vlan_offsets_and_fields() @test {
 }
 
 fn void test_infers_adjacent_protocol_fields() @test {
-	BuildResult result = build_default("Ether()/VLAN()/IP()/UDP()");
+	BuildResult result = testutil::build_default("Ether()/VLAN()/IP()/UDP()");
 	assert(result.ok);
 	PacketConstructor p = hdrs(result);
 	assert(p.len() == 4);
@@ -155,7 +144,7 @@ fn void test_infers_adjacent_protocol_fields() @test {
 }
 
 fn void test_infers_ipv6_next_header() @test {
-	BuildResult result = build_default("Ether()/IPv6()/TCP()");
+	BuildResult result = testutil::build_default("Ether()/IPv6()/TCP()");
 	assert(result.ok);
 	PacketConstructor p = hdrs(result);
 	assert(p.len() == 3);
@@ -170,7 +159,7 @@ fn void test_infers_ipv6_next_header() @test {
 }
 
 fn void test_explicit_protocol_field_overrides_inference_with_warning() @test {
-	BuildResult result = build_default("Ether(type=0x86dd)/IP()");
+	BuildResult result = testutil::build_default("Ether(type=0x86dd)/IP()");
 	assert(result.ok);
 	PacketConstructor p = hdrs(result);
 	assert(p.len() == 2);
@@ -183,7 +172,7 @@ fn void test_explicit_protocol_field_overrides_inference_with_warning() @test {
 }
 
 fn void test_matching_explicit_protocol_field_does_not_warn() @test {
-	BuildResult result = build_default("Ether(type=0x0800)/IP()");
+	BuildResult result = testutil::build_default("Ether(type=0x0800)/IP()");
 	assert(result.ok);
 	assert(result.warnings.len() == 0);
 
@@ -198,7 +187,7 @@ fn void test_custom_inference_rule_uses_adjacent_headers() @test {
 	reg.register_header("Inner", { registry::fld("field", "b8") });
 	reg.register_inference_rule("Outer", "Inner", "type", value::cv_uint(42))!!;
 
-	BuildResult result = build_with("Outer()/Inner()", &reg);
+	BuildResult result = testutil::build_with("Outer()/Inner()", &reg);
 	assert(result.ok);
 	PacketConstructor p = hdrs(result);
 	assert(p.len() == 2);
@@ -223,7 +212,7 @@ fn void test_invalid_inference_rule_value_fails_at_registration() @test {
 }
 
 fn void test_vlan_values_override_defaults() @test {
-	BuildResult result = build_default("VLAN(prio=7,dei=1,vlan=4095,type=0x0800)");
+	BuildResult result = testutil::build_default("VLAN(prio=7,dei=1,vlan=4095,type=0x0800)");
 	assert(result.ok);
 	PacketConstructor p = hdrs(result);
 	assert(p.len() == 1);
@@ -240,7 +229,7 @@ fn void test_vlan_values_override_defaults() @test {
 }
 
 fn void test_vxlan_defaults_and_values() @test {
-	BuildResult result = build_default("UDP()/VXLAN(vni=100)");
+	BuildResult result = testutil::build_default("UDP()/VXLAN(vni=100)");
 	assert(result.ok);
 	PacketConstructor p = hdrs(result);
 	assert(p.len() == 2);
@@ -262,7 +251,7 @@ fn void test_vxlan_defaults_and_values() @test {
 }
 
 fn void test_payload_length_advances_following_header_offset() @test {
-	BuildResult result = build_default("Ether()/Payload(length=32)/UDP()");
+	BuildResult result = testutil::build_default("Ether()/Payload(length=32)/UDP()");
 	assert(result.ok);
 	PacketConstructor p = hdrs(result);
 	assert(p.len() == 3);
@@ -278,7 +267,7 @@ fn void test_payload_length_advances_following_header_offset() @test {
 }
 
 fn void test_payload_total_length_calculates_payload_length() @test {
-	BuildResult result = build_default("Ether()/IP()/Payload(total_length=100)");
+	BuildResult result = testutil::build_default("Ether()/IP()/Payload(total_length=100)");
 	assert(result.ok);
 	PacketConstructor p = hdrs(result);
 
@@ -291,21 +280,21 @@ fn void test_payload_total_length_calculates_payload_length() @test {
 }
 
 fn void test_payload_total_length_rejects_too_small_packet() @test {
-	BuildResult result = build_default("Ether()/IP()/Payload(total_length=20)");
+	BuildResult result = testutil::build_default("Ether()/IP()/Payload(total_length=20)");
 	assert(!result.ok);
 	assert(result.errors.len() == 1);
 	assert(result.errors[0].contains("smaller than preceding header length 34"));
 }
 
 fn void test_payload_rejects_conflicting_length_options() @test {
-	BuildResult result = build_default("Ether()/Payload(length=10,total_length=64)");
+	BuildResult result = testutil::build_default("Ether()/Payload(length=10,total_length=64)");
 	assert(!result.ok);
 	assert(result.errors.len() == 1);
 	assert(result.errors[0].contains("cannot both be explicitly set"));
 }
 
 fn void test_unknown_header_fails() @test {
-	BuildResult result = build_default("BadHeader()");
+	BuildResult result = testutil::build_default("BadHeader()");
 	assert(!result.ok);
 	assert(result.errors.len() == 1);
 	assert(result.errors[0] == "unknown header: 'BadHeader'");
@@ -313,42 +302,42 @@ fn void test_unknown_header_fails() @test {
 }
 
 fn void test_unknown_attribute_fails() @test {
-	BuildResult result = build_default("Ether(unknown=1)");
+	BuildResult result = testutil::build_default("Ether(unknown=1)");
 	assert(!result.ok);
 	assert(result.errors.len() == 1);
 	assert(result.errors[0] == "unknown attribute 'unknown' in header 'Ether'");
 }
 
 fn void test_duplicate_attribute_fails() @test {
-	BuildResult result = build_default("UDP(sport=1,sport=2)");
+	BuildResult result = testutil::build_default("UDP(sport=1,sport=2)");
 	assert(!result.ok);
 	assert(result.errors.len() == 1);
 	assert(result.errors[0] == "duplicate attribute 'sport' in header 'UDP'");
 }
 
 fn void test_name_only_attribute_fails() @test {
-	BuildResult result = build_default("TCP(SYN)");
+	BuildResult result = testutil::build_default("TCP(SYN)");
 	assert(!result.ok);
 	assert(result.errors.len() == 1);
 	assert(result.errors[0] == "unknown attribute 'SYN' in header 'TCP'");
 }
 
 fn void test_known_name_only_attribute_fails() @test {
-	BuildResult result = build_default("TCP(flags)");
+	BuildResult result = testutil::build_default("TCP(flags)");
 	assert(!result.ok);
 	assert(result.errors.len() == 1);
 	assert(result.errors[0] == "attribute 'flags' in header 'TCP' requires a value");
 }
 
 fn void test_bit_width_overflow_fails() @test {
-	BuildResult result = build_default("TCP(dport=65536)");
+	BuildResult result = testutil::build_default("TCP(dport=65536)");
 	assert(!result.ok);
 	assert(result.errors.len() == 1);
 	assert(result.errors[0].contains("16 bits"));
 }
 
 fn void test_vlan_bit_width_overflow_fails() @test {
-	BuildResult result = build_default("VLAN(vlan=4096)");
+	BuildResult result = testutil::build_default("VLAN(vlan=4096)");
 	assert(!result.ok);
 	assert(result.errors.len() == 1);
 	assert(result.errors[0].contains("12 bits"));
@@ -358,7 +347,7 @@ fn void test_bit_ranges_default_to_scalar_zero() @test {
 	Registry reg = registry::create_empty_registry();
 	reg.register_header("MyHdr", { registry::fld("field", "b16_ranges") });
 
-	BuildResult result = build_with("MyHdr()", &reg);
+	BuildResult result = testutil::build_with("MyHdr()", &reg);
 	assert(result.ok);
 	PacketConstructor p = hdrs(result);
 	assert(p.len() == 1);
@@ -372,7 +361,7 @@ fn void test_options_are_constructed_but_not_serialized_fields() @test {
 	Registry reg = registry::create_empty_registry();
 	reg.register_header("Payload", {}, { registry::opt_scalar_default("length", "b64", value::cv_uint(64)) });
 
-	BuildResult result = build_with("Payload(length=100)", &reg);
+	BuildResult result = testutil::build_with("Payload(length=100)", &reg);
 	assert(result.ok);
 	PacketConstructor p = hdrs(result);
 	assert(p.len() == 1);
@@ -388,7 +377,7 @@ fn void test_options_use_defaults() @test {
 	Registry reg = registry::create_empty_registry();
 	reg.register_header("Payload", {}, { registry::opt_scalar_default("length", "b64", value::cv_uint(64)) });
 
-	BuildResult result = build_with("Payload()", &reg);
+	BuildResult result = testutil::build_with("Payload()", &reg);
 	assert(result.ok);
 	HeaderConstructor payload = hdrs(result)[0];
 	assert(payload.fields.len() == 0);
@@ -403,7 +392,7 @@ fn void test_packet_valued_options_construct_nested_packet() @test {
 	reg.register_header("InnerA", { registry::fld("a", "b8") });
 	reg.register_header("InnerB", { registry::fld("b", "b16") });
 
-	BuildResult result = build_with("Outer(children=InnerA(a=1)/InnerB(b=2))", &reg);
+	BuildResult result = testutil::build_with("Outer(children=InnerA(a=1)/InnerB(b=2))", &reg);
 	assert(result.ok);
 	HeaderConstructor outer = hdrs(result)[0];
 	assert(outer.options.len() == 1);
@@ -421,7 +410,7 @@ fn void test_packet_valued_option_rejects_scalar_value() @test {
 	Registry reg = registry::create_empty_registry();
 	reg.register_header("Outer", {}, { registry::opt_packet("children") });
 
-	BuildResult result = build_with("Outer(children=1)", &reg);
+	BuildResult result = testutil::build_with("Outer(children=1)", &reg);
 	assert(!result.ok);
 	assert(result.errors.len() == 1);
 	assert(result.errors[0].contains("requires a packet value"));
@@ -432,7 +421,7 @@ fn void test_scalar_field_rejects_packet_value() @test {
 	reg.register_header("Outer", { registry::fld("field", "b8") });
 	reg.register_header("Inner", { registry::fld("value", "b8") });
 
-	BuildResult result = build_with("Outer(field=Inner(value=1))", &reg);
+	BuildResult result = testutil::build_with("Outer(field=Inner(value=1))", &reg);
 	assert(!result.ok);
 	assert(result.errors.len() == 1);
 	assert(result.errors[0].contains("requires a scalar value"));
@@ -445,7 +434,7 @@ fn void test_bit_ranges_preserve_scalar_syntax_as_uint64() @test {
 		registry::fld("quoted", "b16_ranges"),
 	});
 
-	BuildResult result = build_with(`MyHdr(unquoted=1,quoted="2")`, &reg);
+	BuildResult result = testutil::build_with(`MyHdr(unquoted=1,quoted="2")`, &reg);
 	assert(result.ok);
 	HeaderConstructor header = hdrs(result)[0];
 	assert(get_field(header, "unquoted").value.uint_val == 1);
@@ -461,7 +450,7 @@ fn void test_bit_ranges_parse_prefixed_integer_syntax() @test {
 		registry::fld("quoted", "b16_ranges"),
 	});
 
-	BuildResult result = build_with(`MyHdr(unquoted=0b1010,quoted="0x10")`, &reg);
+	BuildResult result = testutil::build_with(`MyHdr(unquoted=0b1010,quoted="0x10")`, &reg);
 	assert(result.ok);
 	HeaderConstructor header = hdrs(result)[0];
 	assert(get_field(header, "unquoted").value.uint_val == 10);
@@ -475,7 +464,7 @@ fn void test_bit_ranges_normalize_range_syntax() @test {
 		registry::fld("list", "b16_ranges"),
 	});
 
-	BuildResult result = build_with(`MyHdr(range="0x1-0b10",list="[1, 0b10-0x3]")`, &reg);
+	BuildResult result = testutil::build_with(`MyHdr(range="0x1-0b10",list="[1, 0b10-0x3]")`, &reg);
 	assert(result.ok);
 	HeaderConstructor header = hdrs(result)[0];
 

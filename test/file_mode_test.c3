@@ -7,13 +7,11 @@ import flowforge::testutil;
 import std::collections::list;
 import std::io;
 
-fn char byte_at(char[] bytes, usz offset) => bytes[offset];
-
 fn uint u32_le_at(char[] bytes, usz offset) {
-	return (uint)byte_at(bytes, offset)
-		| ((uint)byte_at(bytes, offset + 1) << 8)
-		| ((uint)byte_at(bytes, offset + 2) << 16)
-		| ((uint)byte_at(bytes, offset + 3) << 24);
+	return (uint)testutil::byte_at(bytes, offset)
+		| ((uint)testutil::byte_at(bytes, offset + 1) << 8)
+		| ((uint)testutil::byte_at(bytes, offset + 2) << 16)
+		| ((uint)testutil::byte_at(bytes, offset + 3) << 24);
 }
 
 fn bool bytes_equal(char[] a, char[] b) {
@@ -182,10 +180,10 @@ fn void test_pcap_writer_writes_classic_ethernet_pcap() @test {
 	assert(u32_le_at(bytes, 20) == 1);
 	assert(u32_le_at(bytes, 32) == 14);
 	assert(u32_le_at(bytes, 36) == 14);
-	assert(byte_at(bytes, 40) == 0xff);
-	assert(byte_at(bytes, 45) == 0xff);
-	assert(byte_at(bytes, 52) == 0x08);
-	assert(byte_at(bytes, 53) == 0x00);
+	assert(testutil::byte_at(bytes, 40) == 0xff);
+	assert(testutil::byte_at(bytes, 45) == 0xff);
+	assert(testutil::byte_at(bytes, 52) == 0x08);
+	assert(testutil::byte_at(bytes, 53) == 0x00);
 }
 
 fn void test_pcap_writer_requires_header() @test {
