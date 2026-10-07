@@ -14,14 +14,6 @@ fn uint u32_le_at(char[] bytes, usz offset) {
 		| ((uint)testutil::byte_at(bytes, offset + 3) << 24);
 }
 
-fn bool bytes_equal(char[] a, char[] b) {
-	if (a.len != b.len) return false;
-	for (usz i = 0; i < a.len; i++) {
-		if (a[i] != b[i]) return false;
-	}
-	return true;
-}
-
 fn void test_generator_caps_range_expansion() @test {
 	Registry reg = registry::create_default_registry();
 	PacketGenerator gen = { .registry = &reg };
@@ -149,15 +141,15 @@ fn void test_generator_applies_flow_into_prefilled_buffer_repeatedly() @test {
 
 	assert(result.packet.apply_flow(0, reusable, &errors));
 	assert(errors.len() == 0);
-	assert(bytes_equal(reusable, first_expected));
+	assert(reusable[..] == first_expected[..]);
 
 	assert(result.packet.apply_flow(3, reusable, &errors));
 	assert(errors.len() == 0);
-	assert(bytes_equal(reusable, last_expected));
+	assert(reusable[..] == last_expected[..]);
 
 	assert(result.packet.apply_flow(0, reusable, &errors));
 	assert(errors.len() == 0);
-	assert(bytes_equal(reusable, first_expected));
+	assert(reusable[..] == first_expected[..]);
 }
 
 fn void test_pcap_writer_writes_classic_ethernet_pcap() @test {

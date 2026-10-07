@@ -15,7 +15,23 @@ Review date: 2026-10-06. Whole-project review (9,670 lines: src/ 19 files, test/
 
 **Deliberately not converted to faults** (recorded rationale): cvalue/validate keep `Result{T,String}` — detailed diagnostics are their payload and checker tests assert message content; constructor/generator/serializer/runtime keep their aggregation structs (`BuildResult`, `SerializeResult`, `Result`) for the same reason; those structs' internal leaf fns are future work.
 
-**Still open:** serializer fixup-block duplication + uint128; runtime_live `defer`/fault rework + atomic stop flag; CLI arg parsing dedup; dpdk extern wrapping; test boilerplate macros; apply_flow*/dup_*_ranges dedup; `--capture` ambiguity; pcap fault usage.
+**Done — serializer/generator/CLI/runtime/pcap:**
+- serializer: apply_fixup_plan pair unified (~260→1 body, 4→1 edit site for checksum fixes); plan_packet_fixups VXLAN/flat branches unified via PlanSlot helpers; range_at_index/total_*/make_* triplets via macros; named header-offset constants; write_bytes slice copy; dead faultdef removed
+- generator: apply_flow variants unified (validate/checksums_only knobs); dup_*_ranges via @dup_ranges macro; ULONG_MAX → ulong::max
+- runtime/runtime_live: stop flag Atomic{bool} (was a cross-thread data race); split_dpdk_args → String[]? fault; std limits; magic 8191; double-init removed; defer teardown verified single-exit (finding was stale)
+- CLI: parse_positive_arg helper (3 deduped option parsers); --capture ambiguity fixed (capture file only consumed after positional input; e2e order preserved); PACKET: prefix helper
+- pcap: PcapWriteResult deleted, void? fault returns, dead `written < 0` check removed
+- dpdk/stats: dead FF_OFFLOAD_L3_* removed, reset_offload single zeroing, math::abs
+
+**Done — tests:**
+- build_default/build_with/byte_at consolidated into testutil; checker_test 642→469 lines via check_default/check_with_header; runtime_test re-export deleted; if(catch)+assert(false) → `!!`; bytes_equal → slice `==`
+
+**Still open (deliberately deferred, with rationale):**
+- runtime_live helper layer `bool + List{String}*` → fault conversion: rc checks already centralized; DPDK paths only fully exercisable with a real EAL (unit tests cover the shim-backed subset). Same rationale for raw `rte_*` extern wrapping in dpdk.c3.
+- Lexer-test `assert_token` macro / `@test` module-annotation consistency: cosmetic, no behavior.
+- `header_file.c3` / `constructor.c3` internal bool+errors leaf fns: aggregation structs stay by design.
+
+**Toolchain blocker recorded:** native `uint128` for the IPv6 borrow/carry loops was implemented and *reverted* — c3c 0.8.3 miscompiles 128-bit arithmetic at -O0 (subtraction produces swapped limbs; verified with a repro). Byte loops kept with explanatory comments; revisit when i128 codegen is fixed.
 
 ## Executive summary
 
