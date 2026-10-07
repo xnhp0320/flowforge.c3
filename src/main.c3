@@ -310,7 +310,7 @@ fn int run_file_mode(Packet packet, generator::MaybeCount count, String output_p
 
 fn int file_mode_inline(String inline_expr, generator::MaybeCount count, String output_path, bool verbose, Registry* reg) {
 	String expr = inline_expr;
-	if (expr.starts_with("PACKET:")) expr = expr["PACKET:".len..].trim();
+	expr = strip_packet_prefix(expr);
 
 	Parser p;
 	if (catch err = p.init(expr)) return parse_failed(&p, err);
@@ -407,6 +407,32 @@ fn int run_live_mode(String content, String program_name, RunOptions options, bo
 	return 0;
 }
 
+// Parses the value of a positive-integer CLI option (-c/--count, --clone,
+// --stats-interval). Prints the error and returns an empty optional on
+// failure; sets `show_usage` when the option value is missing entirely.
+fn ulong? parse_positive_arg(String[] args, usz* index, String invalid_fmt, String not_positive_msg, bool* show_usage) @private {
+	if (*index + 1 >= args.len) {
+		*show_usage = true;
+		return {};
+	}
+	*index = *index + 1;
+	long? value = args[*index].to_long();
+	if (catch value) {
+		io::eprintfn(invalid_fmt, args[*index]);
+		return {};
+	}
+	if (value <= 0) {
+		io::eprintfn("%s", not_positive_msg);
+		return {};
+	}
+	return (ulong)value;
+}
+
+fn String strip_packet_prefix(String expr) @private {
+	if (expr.starts_with("PACKET:")) return expr["PACKET:".len..].trim();
+	return expr;
+}
+
 fn int main(String[] args) {
 	if (args.len < 2) return usage(args[0]);
 
@@ -447,30 +473,30 @@ fn int main(String[] args) {
 			output_path = args[++i];
 		}
 		else if (args[i] == "-c" || args[i] == "--count") {
-			if (i + 1 >= args.len) return usage(args[0]);
-			long? value = args[++i].to_long();
-			if (catch value) {
-				io::eprintfn("invalid count '%s'", args[i]);
+			bool show_usage = false;
+			ulong? count = parse_positive_arg(args, &i, "invalid count '%s'", "count must be positive", &show_usage);
+			if (try count) {
+				cli_count.set(count);
+			}
+			else if (show_usage) {
+				return usage(args[0]);
+			}
+			else {
 				return 1;
 			}
-			if (value <= 0) {
-				io::eprintfn("count must be positive");
-				return 1;
-			}
-			cli_count.set((ulong)value);
 		}
 		else if (args[i] == "--clone") {
-			if (i + 1 >= args.len) return usage(args[0]);
-			long? value = args[++i].to_long();
-			if (catch value) {
-				io::eprintfn("clone count must be a positive integer");
+			bool show_usage = false;
+			ulong? count = parse_positive_arg(args, &i, "clone count must be a positive integer: '%s'", "clone count must be a positive integer", &show_usage);
+			if (try count) {
+				live_options.clone_count = count;
+			}
+			else if (show_usage) {
+				return usage(args[0]);
+			}
+			else {
 				return 1;
 			}
-			if (value <= 0) {
-				io::eprintfn("clone count must be a positive integer");
-				return 1;
-			}
-			live_options.clone_count = (ulong)value;
 			live_flag_present = true;
 		}
 		else if (args[i] == "--split") {
@@ -486,17 +512,17 @@ fn int main(String[] args) {
 			live_flag_present = true;
 		}
 		else if (args[i] == "--stats-interval") {
-			if (i + 1 >= args.len) return usage(args[0]);
-			long? value = args[++i].to_long();
-			if (catch value) {
-				io::eprintfn("stats interval must be a positive integer");
+			bool show_usage = false;
+			ulong? interval = parse_positive_arg(args, &i, "stats interval must be a positive integer: '%s'", "stats interval must be a positive integer", &show_usage);
+			if (try interval) {
+				live_options.stats_interval_seconds.set(interval);
+			}
+			else if (show_usage) {
+				return usage(args[0]);
+			}
+			else {
 				return 1;
 			}
-			if (value <= 0) {
-				io::eprintfn("stats interval must be a positive integer");
-				return 1;
-			}
-			live_options.stats_interval_seconds.set((ulong)value);
 			live_flag_present = true;
 		}
 		else if (args[i] == "--dump-mempool-seed") {
@@ -507,7 +533,11 @@ fn int main(String[] args) {
 		else if (args[i] == "--capture") {
 			live_options.capture = true;
 			live_flag_present = true;
-			if (i + 1 < args.len && !args[i + 1].starts_with("-")) {
+			// The optional capture file is only consumed when a positional
+			// input was already seen (`ffg prog.packet --capture out.pcap`);
+			// otherwise `ffg --capture prog.packet` would silently swallow
+			// the program path as the capture file.
+			if (input_path.len && i + 1 < args.len && !args[i + 1].starts_with("-")) {
 				live_options.capture_file.set(args[++i]);
 			}
 		}
@@ -545,7 +575,7 @@ fn int main(String[] args) {
 
 	if (use_inline) {
 		String expr = inline_expr;
-		if (expr.starts_with("PACKET:")) expr = expr["PACKET:".len..].trim();
+		expr = strip_packet_prefix(expr);
 		return run_check(expr, parse_only, verbose, reg);
 	}
 
