@@ -267,6 +267,28 @@ fn ulong gcd_u128_ulong(uint128 left, ulong right) {
 		b = remainder;
 	}
 	return (ulong)a;
+fn uint128 ipv6_to_u128(IPv6 ip) {
+	uint128 v = 0;
+	for (usz i = 0; i < 16; i++) {
+		v = (v << 8) | (uint128)(ip.bytes[i] & 0xff);
+	}
+	return v;
+}
+
+fn IPv6 u128_to_ipv6(uint128 v) {
+	char[16] bytes;
+	for (usz i = 16; i > 0; i--) {
+		bytes[i - 1] = (char)(v & 0xff);
+		v >>= 8;
+	}
+	return value::ipv6_from_bytes(bytes);
+}
+
+fn ulong ipv6_range_count(IPv6Range r) {
+	uint128 diff = ipv6_to_u128(r.last) - ipv6_to_u128(r.first);
+	if (diff > (uint128)ulong::max) return ulong::max;
+	ulong value = (ulong)diff;
+	return value == ulong::max ? ulong::max : value + 1;
 }
 
 fn RangeTraversal make_range_traversal(uint128 length, bool full_domain, Maybe{ulong} requested_step, bool requested_random) {
@@ -405,24 +427,17 @@ fn uint128 range_traversal_offset(ulong index, uint128 length, bool full_domain,
 			return full_domain ? offset : offset % length;
 		case RANDOM:
 			return random_below_u128(length, full_domain);
-// See ipv6_range_count: uint128 addition hits the same c3c 0.8.3 -O0 codegen
-// bug, so the explicit carry loop stays.
-fn IPv6 add_ipv6_offset(IPv6 ip, ulong offset) {
-	char[16] bytes = ip.bytes;
-	ushort carry = 0;
-	for (usz index = 16; index > 0; index--) {
-		usz shift = (16 - index) * 8;
-		ushort addend = shift < 64 ? (ushort)((offset >> shift) & 0xff) : 0;
-		ushort sum = (ushort)((ushort)bytes[index - 1] + addend + carry);
-		bytes[index - 1] = (char)(sum & 0xff);
-		carry = (ushort)(sum >> 8);
 	}
+}
+
+fn IPv6 add_ipv6_offset(IPv6 ip, ulong offset) {
+	return u128_to_ipv6(ipv6_to_u128(ip) + (uint128)offset);
 }
 
 fn IPv6 add_ipv6_traversal_offset(IPv6 ip, ulong index, IPv6PatchRange range) {
 	uint128 offset = range_traversal_offset(index, range.length, range.full_domain, range.traversal);
-	uint128 value = cvalue::ipv6_to_u128(ip) + offset;
-	return cvalue::ipv6_from_u128(value);
+	return u128_to_ipv6(ipv6_to_u128(ip) + offset);
+}
 }
 
 // --- PayloadFieldModifier ----------------------------------------------

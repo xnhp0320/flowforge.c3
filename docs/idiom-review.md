@@ -16,7 +16,7 @@ Review date: 2026-10-06. Whole-project review (9,670 lines: src/ 19 files, test/
 **Deliberately not converted to faults** (recorded rationale): cvalue/validate keep `Result{T,String}` — detailed diagnostics are their payload and checker tests assert message content; constructor/generator/serializer/runtime keep their aggregation structs (`BuildResult`, `SerializeResult`, `Result`) for the same reason; those structs' internal leaf fns are future work.
 
 **Done — serializer/generator/CLI/runtime/pcap:**
-- serializer: apply_fixup_plan pair unified (~260→1 body, 4→1 edit site for checksum fixes); plan_packet_fixups VXLAN/flat branches unified via PlanSlot helpers; range_at_index/total_*/make_* triplets via macros; named header-offset constants; write_bytes slice copy; dead faultdef removed
+- serializer: apply_fixup_plan pair unified (~260→1 body, 4→1 edit site for checksum fixes); plan_packet_fixups VXLAN/flat branches unified via PlanSlot helpers; range_at_index/total_*/make_* triplets via macros; named header-offset constants; write_bytes slice copy; dead faultdef removed; ipv6_range_count + add_ipv6_offset replaced with native uint128 arithmetic (~35 lines → ~10 lines)
 - generator: apply_flow variants unified (validate/checksums_only knobs); dup_*_ranges via @dup_ranges macro; ULONG_MAX → ulong::max
 - runtime/runtime_live: stop flag Atomic{bool} (was a cross-thread data race); split_dpdk_args → String[]? fault; std limits; magic 8191; double-init removed; defer teardown verified single-exit (finding was stale)
 - CLI: parse_positive_arg helper (3 deduped option parsers); --capture ambiguity fixed (capture file only consumed after positional input; e2e order preserved); PACKET: prefix helper
@@ -31,7 +31,7 @@ Review date: 2026-10-06. Whole-project review (9,670 lines: src/ 19 files, test/
 - Lexer-test `assert_token` macro / `@test` module-annotation consistency: cosmetic, no behavior.
 - `header_file.c3` / `constructor.c3` internal bool+errors leaf fns: aggregation structs stay by design.
 
-**Toolchain blocker recorded:** native `uint128` for the IPv6 borrow/carry loops was implemented and *reverted* — c3c 0.8.3 miscompiles 128-bit arithmetic at -O0 (subtraction produces swapped limbs; verified with a repro). Byte loops kept with explanatory comments; revisit when i128 codegen is fixed.
+**Toolchain blocker resolved:** the `uint128` miscompilation reported on c3c 0.8.3 (swapped 64-bit limbs on 128-bit subtraction at `-O0`) no longer reproduces on c3c 0.8.5. The byte loops in `serializer.c3` were replaced with native `uint128` load/add/sub/store helpers; IPv6 range expansion and offset application verified by unit tests and wire-format audit.
 
 ## Executive summary
 
