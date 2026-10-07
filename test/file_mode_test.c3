@@ -7,21 +7,11 @@ import flowforge::testutil;
 import std::collections::list;
 import std::io;
 
-fn char byte_at(char[] bytes, usz offset) => bytes[offset];
-
 fn uint u32_le_at(char[] bytes, usz offset) {
-	return (uint)byte_at(bytes, offset)
-		| ((uint)byte_at(bytes, offset + 1) << 8)
-		| ((uint)byte_at(bytes, offset + 2) << 16)
-		| ((uint)byte_at(bytes, offset + 3) << 24);
-}
-
-fn bool bytes_equal(char[] a, char[] b) {
-	if (a.len != b.len) return false;
-	for (usz i = 0; i < a.len; i++) {
-		if (a[i] != b[i]) return false;
-	}
-	return true;
+	return (uint)testutil::byte_at(bytes, offset)
+		| ((uint)testutil::byte_at(bytes, offset + 1) << 8)
+		| ((uint)testutil::byte_at(bytes, offset + 2) << 16)
+		| ((uint)testutil::byte_at(bytes, offset + 3) << 24);
 }
 
 fn void test_generator_caps_range_expansion() @test {
@@ -151,15 +141,15 @@ fn void test_generator_applies_flow_into_prefilled_buffer_repeatedly() @test {
 
 	assert(result.packet.apply_flow(0, reusable, &errors));
 	assert(errors.len() == 0);
-	assert(bytes_equal(reusable, first_expected));
+	assert(reusable[..] == first_expected[..]);
 
 	assert(result.packet.apply_flow(3, reusable, &errors));
 	assert(errors.len() == 0);
-	assert(bytes_equal(reusable, last_expected));
+	assert(reusable[..] == last_expected[..]);
 
 	assert(result.packet.apply_flow(0, reusable, &errors));
 	assert(errors.len() == 0);
-	assert(bytes_equal(reusable, first_expected));
+	assert(reusable[..] == first_expected[..]);
 }
 
 fn void test_pcap_writer_writes_classic_ethernet_pcap() @test {
@@ -172,8 +162,8 @@ fn void test_pcap_writer_writes_classic_ethernet_pcap() @test {
 		0x22, 0x33, 0x44, 0x55, 0x08, 0x00,
 	};
 
-	assert(writer.write_header().ok);
-	assert(writer.write_packet(payload[..]).ok);
+	writer.write_header()!!;
+	writer.write_packet(payload[..])!!;
 
 	char[] bytes = output.array_view();
 	assert(bytes.len == 24 + 16 + 14);
@@ -182,10 +172,10 @@ fn void test_pcap_writer_writes_classic_ethernet_pcap() @test {
 	assert(u32_le_at(bytes, 20) == 1);
 	assert(u32_le_at(bytes, 32) == 14);
 	assert(u32_le_at(bytes, 36) == 14);
-	assert(byte_at(bytes, 40) == 0xff);
-	assert(byte_at(bytes, 45) == 0xff);
-	assert(byte_at(bytes, 52) == 0x08);
-	assert(byte_at(bytes, 53) == 0x00);
+	assert(testutil::byte_at(bytes, 40) == 0xff);
+	assert(testutil::byte_at(bytes, 45) == 0xff);
+	assert(testutil::byte_at(bytes, 52) == 0x08);
+	assert(testutil::byte_at(bytes, 53) == 0x00);
 }
 
 fn void test_pcap_writer_requires_header() @test {
@@ -194,9 +184,10 @@ fn void test_pcap_writer_requires_header() @test {
 	PcapWriter writer = { .output = &output };
 
 	char[1] payload = { 0 };
-	PcapWriteResult result = writer.write_packet(payload[..]);
-
-	assert(!result.ok);
-	assert(result.errors.len == 1);
-	assert(result.errors[0] == "pcap header must be written before packet records");
+	if (catch err = writer.write_packet(payload[..])) {
+		assert(err == pcap::HEADER_NOT_WRITTEN);
+	}
+	else {
+		unreachable("expected write_packet to fail");
+	}
 }

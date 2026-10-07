@@ -13,10 +13,8 @@ const String TAP_RUNTIME_PROGRAM =
 	"PACKET_COUNT: 3\n"
 	"PACKET: Ether(dst=\"ff:ff:ff:ff:ff:ff\",src=\"02:64:74:61:70:00\",type=2048)/IP(src=\"192.168.0.1-192.168.0.3\",dst=\"192.168.0.2\",ttl=64,proto=17)/UDP(sport=1234,dport=5678)";
 
-fn Program must_parse_program(String input) => testutil::must_parse_program(input);
-
 fn void test_valid_mandatory_variables() @test {
-	Program program = must_parse_program(
+	Program program = testutil::must_parse_program(
 		"DPDK_ARGS: \"--no-huge -l 0\"\nPACKET: Ether()/IP(src=\"192.168.0.1\")");
 	Runtime rt = runtime::runtime_with_default();
 	Result result = rt.check(program);
@@ -27,7 +25,7 @@ fn void test_valid_mandatory_variables() @test {
 }
 
 fn void test_valid_tap_runtime_program() @test {
-	Program program = must_parse_program(TAP_RUNTIME_PROGRAM);
+	Program program = testutil::must_parse_program(TAP_RUNTIME_PROGRAM);
 	Runtime rt = runtime::runtime_with_default();
 	Result result = rt.check(program);
 	assert(result.ok);
@@ -43,7 +41,7 @@ fn void test_jumbo_selects_large_packet_limit_and_requires_dpdk() @test {
 	assert(runtime::packet_size_limit(options) == generator::GENERATOR_MAX_PACKET_SIZE);
 
 	Runtime rt = runtime::runtime_with_default();
-	Result result = rt.check(must_parse_program(
+	Result result = rt.check(testutil::must_parse_program(
 		"BACKEND: \"tap\"\nINTERFACE: \"fftest0\"\nPACKET: Ether()"), options);
 	assert(!result.ok);
 	assert(result.errors.len() == 1);
@@ -52,7 +50,7 @@ fn void test_jumbo_selects_large_packet_limit_and_requires_dpdk() @test {
 
 fn void test_jumbo_allows_packet_larger_than_default_mbuf() @test {
 	Runtime rt = runtime::runtime_with_default();
-	Program program = must_parse_program(
+	Program program = testutil::must_parse_program(
 		"BACKEND: \"dpdk\"\nDPDK_ARGS: \"-l 0\"\nPACKET: Ether()/Payload(length=3000)");
 	Result normal = rt.check(program);
 	assert(!normal.ok);
@@ -65,10 +63,10 @@ fn void test_jumbo_allows_packet_larger_than_default_mbuf() @test {
 }
 
 fn void test_tap_runtime_packet_serializes_and_fixes_up() @test {
-	Program program = must_parse_program(TAP_RUNTIME_PROGRAM);
+	Program program = testutil::must_parse_program(TAP_RUNTIME_PROGRAM);
 	Registry reg = registry::create_default_registry();
 	assert(program.variables.len() >= 3);
-	ScalarValue value = ast::evaluate(program.variables[2].expression)!!;
+	ScalarValue value = ast::evaluate(program.variables[2].expression);
 	assert(value.kind == ScalarKind.PACKET);
 	BuildResult built = constructor::build(&reg, value.packet_val);
 	assert(built.ok);
@@ -84,7 +82,7 @@ fn void test_tap_runtime_packet_serializes_and_fixes_up() @test {
 }
 
 fn void test_packet_count_caps_cartesian_range_expansion() @test {
-	Program program = must_parse_program(
+	Program program = testutil::must_parse_program(
 		"DPDK_ARGS: \"--no-huge --no-pci -l 0\"\n"
 		"PACKET_COUNT: 4\n"
 		"PACKET: IP(src=\"[10.0.0.1-10.0.0.3]\",dst=\"[10.0.1.1-10.0.1.2]\")");
@@ -96,7 +94,7 @@ fn void test_packet_count_caps_cartesian_range_expansion() @test {
 }
 
 fn void test_port_ranges_contribute_to_flow_expansion() @test {
-	Program program = must_parse_program(
+	Program program = testutil::must_parse_program(
 		"DPDK_ARGS: \"--no-huge --no-pci -l 0\"\n"
 		"PACKET: IP()/TCP(sport=\"[10000-10002]\",dport=\"[20000-20001]\")");
 	Runtime rt = runtime::runtime_with_default();
@@ -107,7 +105,7 @@ fn void test_port_ranges_contribute_to_flow_expansion() @test {
 }
 
 fn void test_pmd_threads_and_batch_size_are_runtime_variables() @test {
-	Program program = must_parse_program(
+	Program program = testutil::must_parse_program(
 		"DPDK_ARGS: \"--no-huge --no-pci -l 0-2\"\n"
 		"PMD_THREADS: 2\n"
 		"TX_BATCH_SIZE: 16\n"
@@ -126,7 +124,7 @@ fn void test_pmd_threads_and_batch_size_are_runtime_variables() @test {
 }
 
 fn void test_clone_count_multiplies_planned_transmissions() @test {
-	Program program = must_parse_program(
+	Program program = testutil::must_parse_program(
 		"DPDK_ARGS: \"--no-huge --no-pci -l 0\"\n"
 		"PACKET_COUNT: 3\n"
 		"PACKET: IP(src=\"[10.0.0.1-10.0.0.4]\")");
@@ -142,7 +140,7 @@ fn void test_clone_count_multiplies_planned_transmissions() @test {
 }
 
 fn void test_pmd_threads_duplicate_planned_transmissions_without_split() @test {
-	Program program = must_parse_program(
+	Program program = testutil::must_parse_program(
 		"DPDK_ARGS: \"--no-huge --no-pci -l 0-2\"\n"
 		"PMD_THREADS: 2\n"
 		"PACKET: IP(src=\"[10.0.0.1-10.0.0.3]\")");
@@ -158,7 +156,7 @@ fn void test_pmd_threads_duplicate_planned_transmissions_without_split() @test {
 }
 
 fn void test_split_pmd_threads_partition_planned_transmissions() @test {
-	Program program = must_parse_program(
+	Program program = testutil::must_parse_program(
 		"DPDK_ARGS: \"--no-huge --no-pci -l 0-2\"\n"
 		"PMD_THREADS: 2\n"
 		"PACKET: IP(src=\"[10.0.0.1-10.0.0.3]\")");
@@ -175,7 +173,7 @@ fn void test_split_pmd_threads_partition_planned_transmissions() @test {
 }
 
 fn void test_once_option_is_reported() @test {
-	Program program = must_parse_program(
+	Program program = testutil::must_parse_program(
 		"DPDK_ARGS: \"--no-huge --no-pci -l 0\"\nPACKET: Ether()");
 	Runtime rt = runtime::runtime_with_default();
 	RunOptions options = runtime::default_run_options();
@@ -187,7 +185,7 @@ fn void test_once_option_is_reported() @test {
 }
 
 fn void test_stats_interval_option_is_reported() @test {
-	Program program = must_parse_program(
+	Program program = testutil::must_parse_program(
 		"DPDK_ARGS: \"--no-huge --no-pci -l 0\"\nPACKET: Ether()");
 	Runtime rt = runtime::runtime_with_default();
 	RunOptions options = runtime::default_run_options();
@@ -199,7 +197,7 @@ fn void test_stats_interval_option_is_reported() @test {
 }
 
 fn void test_clone_count_must_be_positive() @test {
-	Program program = must_parse_program(
+	Program program = testutil::must_parse_program(
 		"DPDK_ARGS: \"--no-huge --no-pci -l 0\"\nPACKET: Ether()");
 	Runtime rt = runtime::runtime_with_default();
 	RunOptions options = runtime::default_run_options();
@@ -211,7 +209,7 @@ fn void test_clone_count_must_be_positive() @test {
 }
 
 fn void test_packet_count_larger_than_range_sends_one_pass_only() @test {
-	Program program = must_parse_program(
+	Program program = testutil::must_parse_program(
 		"DPDK_ARGS: \"--no-huge --no-pci -l 0\"\n"
 		"PACKET_COUNT: 10\n"
 		"PACKET: IP(src=\"10.0.0.1-10.0.0.3\")");
@@ -223,7 +221,7 @@ fn void test_packet_count_larger_than_range_sends_one_pass_only() @test {
 }
 
 fn void test_pmd_threads_must_be_positive() @test {
-	Program program = must_parse_program(
+	Program program = testutil::must_parse_program(
 		"DPDK_ARGS: \"--no-huge --no-pci -l 0\"\nPMD_THREADS: 0\nPACKET: Ether()");
 	Runtime rt = runtime::runtime_with_default();
 	Result result = rt.check(program);
@@ -233,7 +231,7 @@ fn void test_pmd_threads_must_be_positive() @test {
 }
 
 fn void test_tx_batch_size_must_be_positive() @test {
-	Program program = must_parse_program(
+	Program program = testutil::must_parse_program(
 		"DPDK_ARGS: \"--no-huge --no-pci -l 0\"\nTX_BATCH_SIZE: 0\nPACKET: Ether()");
 	Runtime rt = runtime::runtime_with_default();
 	Result result = rt.check(program);
@@ -243,7 +241,7 @@ fn void test_tx_batch_size_must_be_positive() @test {
 }
 
 fn void test_tx_batch_size_is_capped() @test {
-	Program program = must_parse_program(
+	Program program = testutil::must_parse_program(
 		"DPDK_ARGS: \"--no-huge --no-pci -l 0\"\nTX_BATCH_SIZE: 257\nPACKET: Ether()");
 	Runtime rt = runtime::runtime_with_default();
 	Result result = rt.check(program);
@@ -253,7 +251,7 @@ fn void test_tx_batch_size_is_capped() @test {
 }
 
 fn void test_packet_count_must_be_integer() @test {
-	Program program = must_parse_program(
+	Program program = testutil::must_parse_program(
 		"DPDK_ARGS: \"--no-huge --no-pci -l 0\"\nPACKET_COUNT: \"3\"\nPACKET: Ether()");
 	Runtime rt = runtime::runtime_with_default();
 	Result result = rt.check(program);
@@ -263,7 +261,7 @@ fn void test_packet_count_must_be_integer() @test {
 }
 
 fn void test_packet_count_must_be_positive() @test {
-	Program program = must_parse_program(
+	Program program = testutil::must_parse_program(
 		"DPDK_ARGS: \"--no-huge --no-pci -l 0\"\nPACKET_COUNT: 0\nPACKET: Ether()");
 	Runtime rt = runtime::runtime_with_default();
 	Result result = rt.check(program);
@@ -278,7 +276,7 @@ fn void test_rejects_range_expansion_overflow() @test {
 		registry::fld("a", "b64_ranges"),
 		registry::fld("b", "b64_ranges"),
 	});
-	Program program = must_parse_program(
+	Program program = testutil::must_parse_program(
 		"DPDK_ARGS: \"--no-huge --no-pci -l 0\"\n"
 		"PACKET: Wide(a=\"0-18446744073709551615\",b=\"0-18446744073709551615\")");
 	Runtime rt = runtime::runtime_with_registry(&reg);
@@ -289,7 +287,7 @@ fn void test_rejects_range_expansion_overflow() @test {
 }
 
 fn void test_missing_packet() @test {
-	Program program = must_parse_program("DPDK_ARGS: \"--no-huge -l 0\"");
+	Program program = testutil::must_parse_program("DPDK_ARGS: \"--no-huge -l 0\"");
 	Runtime rt = runtime::runtime_with_default();
 	Result result = rt.check(program);
 	assert(!result.ok);
@@ -298,7 +296,7 @@ fn void test_missing_packet() @test {
 }
 
 fn void test_dpdk_args_must_be_string() @test {
-	Program program = must_parse_program("DPDK_ARGS: 1\nPACKET: Ether()");
+	Program program = testutil::must_parse_program("DPDK_ARGS: 1\nPACKET: Ether()");
 	Runtime rt = runtime::runtime_with_default();
 	Result result = rt.check(program);
 	assert(!result.ok);
@@ -307,7 +305,7 @@ fn void test_dpdk_args_must_be_string() @test {
 }
 
 fn void test_packet_must_be_packet() @test {
-	Program program = must_parse_program(
+	Program program = testutil::must_parse_program(
 		"DPDK_ARGS: \"--no-huge -l 0\"\nPACKET: 1");
 	Runtime rt = runtime::runtime_with_default();
 	Result result = rt.check(program);
@@ -317,7 +315,7 @@ fn void test_packet_must_be_packet() @test {
 }
 
 fn void test_packet_checker_errors_block_runtime() @test {
-	Program program = must_parse_program(
+	Program program = testutil::must_parse_program(
 		"DPDK_ARGS: \"--no-huge -l 0\"\nPACKET: BadHeader()");
 	Runtime rt = runtime::runtime_with_default();
 	Result result = rt.check(program);
@@ -327,7 +325,7 @@ fn void test_packet_checker_errors_block_runtime() @test {
 }
 
 fn void test_rx_threads_is_runtime_variable() @test {
-	Program program = must_parse_program(
+	Program program = testutil::must_parse_program(
 		"DPDK_ARGS: \"--no-huge --no-pci -l 0-3\"\nRX_THREADS: 2\nPACKET: Ether()");
 	Runtime rt = runtime::runtime_with_default();
 	Result result = rt.check(program);
@@ -336,7 +334,7 @@ fn void test_rx_threads_is_runtime_variable() @test {
 }
 
 fn void test_rx_threads_must_be_positive() @test {
-	Program program = must_parse_program(
+	Program program = testutil::must_parse_program(
 		"DPDK_ARGS: \"--no-huge --no-pci -l 0\"\nRX_THREADS: 0\nPACKET: Ether()");
 	Runtime rt = runtime::runtime_with_default();
 	Result result = rt.check(program);
@@ -346,7 +344,7 @@ fn void test_rx_threads_must_be_positive() @test {
 }
 
 fn void test_rx_threads_default_is_zero() @test {
-	Program program = must_parse_program(
+	Program program = testutil::must_parse_program(
 		"DPDK_ARGS: \"--no-huge --no-pci -l 0\"\nPACKET: Ether()");
 	Runtime rt = runtime::runtime_with_default();
 	Result result = rt.check(program);

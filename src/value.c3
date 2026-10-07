@@ -4,11 +4,13 @@ import std::net;
 
 faultdef INVALID_MAC, INVALID_IPV4, INVALID_IPV6, WRONG_KIND;
 
-fn int hex_val(char c) {
-	if (c.is_digit()) return (int)(c - '0');
-	if (c >= 'a' && c <= 'f') return (int)(c - 'a' + 10);
-	if (c >= 'A' && c <= 'F') return (int)(c - 'A' + 10);
-	return -1;
+faultdef INVALID_HEX;
+
+fn char? hex_val(char c) {
+	if (c.is_digit()) return (char)(c - '0');
+	if (c >= 'a' && c <= 'f') return (char)(c - 'a' + 10);
+	if (c >= 'A' && c <= 'F') return (char)(c - 'A' + 10);
+	return INVALID_HEX~;
 }
 
 struct MacAddr {
@@ -24,9 +26,12 @@ fn MacAddr? mac_parse(String s) {
 	char[6] bytes;
 	for (usz i = 0; i < 6; i++) {
 		usz base = i * 3;
-		int high = hex_val(s[base]);
-		int low = hex_val(s[base + 1]);
-		if (high < 0 || low < 0) return INVALID_MAC~;
+		char? high_opt = hex_val(s[base]);
+		char? low_opt = hex_val(s[base + 1]);
+		if (catch high_opt) return INVALID_MAC~;
+		if (catch low_opt) return INVALID_MAC~;
+		char high = high_opt;
+		char low = low_opt;
 		if (i < 5 && s[base + 2] != ':') return INVALID_MAC~;
 		bytes[i] = (char)((high << 4) | low);
 	}

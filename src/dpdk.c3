@@ -72,11 +72,7 @@ fn char* Mbuf.append(&self, ushort len) @inline {
    C++ runtime performs before applying a fresh offload request. *>
 fn void Mbuf.reset_offload(&self) @inline {
 	self.ol_flags = 0;
-	self.tx_offload.l2_len = 0;
-	self.tx_offload.l3_len = 0;
-	self.tx_offload.l4_len = 0;
-	self.tx_offload.outer_l2_len = 0;
-	self.tx_offload.outer_l3_len = 0;
+	self.tx_offload = {};
 }
 
 alias LcoreFunction = fn int(void* arg);
@@ -119,10 +115,8 @@ fn bool rss_lb_mask_bits(ushort rx_queue_count, uint* mask_bits) {
 	return true;
 }
 
-// Mirrors serializer::OffloadLayer3 / enum ff_offload_layer3 in the shim.
-const int FF_OFFLOAD_L3_NONE = 0;
-const int FF_OFFLOAD_L3_IPV4 = 1;
-const int FF_OFFLOAD_L3_IPV6 = 2;
+// Mirrors serializer::OffloadLayer3 / enum ff_offload_layer3 in the shim; the
+// runtime assigns the bitstruct field directly from the serializer enum.
 
 // Stable feature bits translated to RTE_ETH_TX_OFFLOAD_* by the C shim.
 const uint FF_TX_OFFLOAD_IPV4_CKSUM = 1u << 0;

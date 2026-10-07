@@ -1,6 +1,7 @@
 module flowforge::ast;
 import std::collections::list;
 import std::collections::maybe;
+faultdef NO_VALUE;
 
 alias MaybeExpression = Maybe{Expression};
 
@@ -67,7 +68,7 @@ struct ScalarValue {
 	}
 }
 
-fn ScalarValue? evaluate(Expression expr) {
+fn ScalarValue evaluate(Expression expr) {
 	switch (expr.kind) {
 		case ExpressionKind.STRING:
 			return { .kind = ScalarKind.STRING, .string_val = expr.string_val };
@@ -84,4 +85,3 @@ fn ScalarValue? attr_scalar(Attribute* attr) {
 	return evaluate(expr);
 }
 
-faultdef NO_VALUE;

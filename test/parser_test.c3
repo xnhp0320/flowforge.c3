@@ -2,12 +2,11 @@ module flowforge_parser_test @test;
 import flowforge::parser;
 import flowforge::ast;
 import std::collections::list;
-import std::collections::result;
 
 fn void test_parser_single_header_no_attrs() @test {
 	Parser p;
-	p.init("Ether");
-	Packet pkt = p.parse_packet().ok()!!;
+	p.init("Ether")!!;
+	Packet pkt = p.parse_packet()!!;
 	assert(pkt.len() == 1);
 	assert(pkt[0].protocol == "Ether");
 	assert(pkt[0].attributes.len() == 0);
@@ -15,8 +14,8 @@ fn void test_parser_single_header_no_attrs() @test {
 
 fn void test_parser_single_header_with_attrs() @test {
 	Parser p;
-	p.init("Ether(dst=\"ff:ff:ff:ff:ff:ff\",src=\"00:11:22:33:44:55\")");
-	Packet pkt = p.parse_packet().ok()!!;
+	p.init("Ether(dst=\"ff:ff:ff:ff:ff:ff\",src=\"00:11:22:33:44:55\")")!!;
+	Packet pkt = p.parse_packet()!!;
 	assert(pkt.len() == 1);
 	assert(pkt[0].protocol == "Ether");
 	assert(pkt[0].attributes.len() == 2);
@@ -38,8 +37,8 @@ fn void test_parser_single_header_with_attrs() @test {
 
 fn void test_parser_scapy_style() @test {
 	Parser p;
-	p.init("Ether(dst=\"ff:ff:ff:ff:ff:ff\")/IP(src=\"192.168.1.1\",dst=\"10.0.0.1\")/TCP(dport=80)");
-	Packet pkt = p.parse_packet().ok()!!;
+	p.init("Ether(dst=\"ff:ff:ff:ff:ff:ff\")/IP(src=\"192.168.1.1\",dst=\"10.0.0.1\")/TCP(dport=80)")!!;
+	Packet pkt = p.parse_packet()!!;
 	assert(pkt.len() == 3);
 
 	assert(pkt[0].protocol == "Ether");
@@ -67,8 +66,8 @@ fn void test_parser_scapy_style() @test {
 
 fn void test_parser_hex_number() @test {
 	Parser p;
-	p.init("Raw(len=0xFF)");
-	Packet pkt = p.parse_packet().ok()!!;
+	p.init("Raw(len=0xFF)")!!;
+	Packet pkt = p.parse_packet()!!;
 	assert(pkt.len() == 1);
 	ScalarValue val = ast::attr_scalar(&pkt[0].attributes[0])!!;
 	assert(val.kind == ScalarKind.INTEGER);
@@ -77,8 +76,8 @@ fn void test_parser_hex_number() @test {
 
 fn void test_parser_binary_number() @test {
 	Parser p;
-	p.init("Raw(len=0b101010)");
-	Packet pkt = p.parse_packet().ok()!!;
+	p.init("Raw(len=0b101010)")!!;
+	Packet pkt = p.parse_packet()!!;
 	assert(pkt.len() == 1);
 	ScalarValue val = ast::attr_scalar(&pkt[0].attributes[0])!!;
 	assert(val.kind == ScalarKind.INTEGER);
@@ -87,8 +86,8 @@ fn void test_parser_binary_number() @test {
 
 fn void test_parser_string_escape() @test {
 	Parser p;
-	p.init("Raw(data=\"line1\\nline2\\ttabbed\")");
-	Packet pkt = p.parse_packet().ok()!!;
+	p.init("Raw(data=\"line1\\nline2\\ttabbed\")")!!;
+	Packet pkt = p.parse_packet()!!;
 	assert(pkt.len() == 1);
 	ScalarValue val = ast::attr_scalar(&pkt[0].attributes[0])!!;
 	assert(val.kind == ScalarKind.STRING);
@@ -97,8 +96,8 @@ fn void test_parser_string_escape() @test {
 
 fn void test_parser_attribute_name_only() @test {
 	Parser p;
-	p.init("Flag(URG,ACK,PSH)");
-	Packet pkt = p.parse_packet().ok()!!;
+	p.init("Flag(URG,ACK,PSH)")!!;
+	Packet pkt = p.parse_packet()!!;
 	assert(pkt.len() == 1);
 	assert(pkt[0].attributes.len() == 3);
 	assert(pkt[0].attributes[0].name == "URG");
@@ -111,8 +110,8 @@ fn void test_parser_attribute_name_only() @test {
 
 fn void test_parser_empty_parens() @test {
 	Parser p;
-	p.init("Ether()");
-	Packet pkt = p.parse_packet().ok()!!;
+	p.init("Ether()")!!;
+	Packet pkt = p.parse_packet()!!;
 	assert(pkt.len() == 1);
 	assert(pkt[0].protocol == "Ether");
 	assert(pkt[0].attributes.len() == 0);
@@ -120,12 +119,12 @@ fn void test_parser_empty_parens() @test {
 
 fn void test_parser_packet_variable_wrapper() @test {
 	Parser p;
-	p.init("PACKET: Ether(dst=\"ff:ff:ff:ff:ff:ff\")/IP(src=\"192.168.1.1\")");
-	Program program = p.parse().ok()!!;
+	p.init("PACKET: Ether(dst=\"ff:ff:ff:ff:ff:ff\")/IP(src=\"192.168.1.1\")")!!;
+	Program program = p.parse()!!;
 	assert(program.variables.len() == 1);
 	assert(program.variables[0].name == "PACKET");
 
-	ScalarValue value = ast::evaluate(program.variables[0].expression)!!;
+	ScalarValue value = ast::evaluate(program.variables[0].expression);
 	assert(value.kind == ScalarKind.PACKET);
 	Packet pkt = value.packet_val;
 	assert(pkt.len() == 2);
@@ -135,30 +134,30 @@ fn void test_parser_packet_variable_wrapper() @test {
 
 fn void test_parser_string_expression() @test {
 	Parser p;
-	p.init("\"hello\"");
-	Expression expression = p.parse_expression().ok()!!;
+	p.init("\"hello\"")!!;
+	Expression expression = p.parse_expression()!!;
 
-	ScalarValue value = ast::evaluate(expression)!!;
+	ScalarValue value = ast::evaluate(expression);
 	assert(value.kind == ScalarKind.STRING);
 	assert(value.string_val == "hello");
 }
 
 fn void test_parser_integer_expression() @test {
 	Parser p;
-	p.init("42");
-	Expression expression = p.parse_expression().ok()!!;
+	p.init("42")!!;
+	Expression expression = p.parse_expression()!!;
 
-	ScalarValue value = ast::evaluate(expression)!!;
+	ScalarValue value = ast::evaluate(expression);
 	assert(value.kind == ScalarKind.INTEGER);
 	assert(value.int_val == 42);
 }
 
 fn void test_parser_packet_expression() @test {
 	Parser p;
-	p.init("Ether()/TCP(dport=80)");
-	Expression expression = p.parse_expression().ok()!!;
+	p.init("Ether()/TCP(dport=80)")!!;
+	Expression expression = p.parse_expression()!!;
 
-	ScalarValue value = ast::evaluate(expression)!!;
+	ScalarValue value = ast::evaluate(expression);
 	assert(value.kind == ScalarKind.PACKET);
 	Packet pkt = value.packet_val;
 	assert(pkt.len() == 2);
@@ -168,8 +167,8 @@ fn void test_parser_packet_expression() @test {
 
 fn void test_parser_attribute_can_take_packet_expression() @test {
 	Parser p;
-	p.init("HeaderA(X=HeaderB()/HeaderC(),D=1)");
-	Packet pkt = p.parse_packet().ok()!!;
+	p.init("HeaderA(X=HeaderB()/HeaderC(),D=1)")!!;
+	Packet pkt = p.parse_packet()!!;
 	assert(pkt.len() == 1);
 	assert(pkt[0].attributes.len() == 2);
 
@@ -187,24 +186,24 @@ fn void test_parser_attribute_can_take_packet_expression() @test {
 
 fn void test_parser_variable_definition() @test {
 	Parser p;
-	p.init("XXX: 1");
-	Variable variable = p.parse_variable().ok()!!;
+	p.init("XXX: 1")!!;
+	Variable variable = p.parse_variable()!!;
 	assert(variable.name == "XXX");
 
-	ScalarValue value = ast::evaluate(variable.expression)!!;
+	ScalarValue value = ast::evaluate(variable.expression);
 	assert(value.kind == ScalarKind.INTEGER);
 	assert(value.int_val == 1);
 }
 
 fn void test_parser_program_with_variables() @test {
 	Parser p;
-	p.init("XXX: 1\nPACKET: IP(src=\"192.168.0.1\")/TCP(dport=80)");
-	Program program = p.parse().ok()!!;
+	p.init("XXX: 1\nPACKET: IP(src=\"192.168.0.1\")/TCP(dport=80)")!!;
+	Program program = p.parse()!!;
 	assert(program.variables.len() == 2);
 	assert(program.variables[0].name == "XXX");
 	assert(program.variables[1].name == "PACKET");
 
-	ScalarValue packet_value = ast::evaluate(program.variables[1].expression)!!;
+	ScalarValue packet_value = ast::evaluate(program.variables[1].expression);
 	assert(packet_value.kind == ScalarKind.PACKET);
 	Packet pkt = packet_value.packet_val;
 	assert(pkt.len() == 2);
@@ -220,13 +219,13 @@ PACKET_COUNT: 1 # one packet
 
 # The hash inside the payload is string data.
 PACKET: Ether()/Raw(data="payload #1") # packet expression
-`);
-	Program program = p.parse().ok()!!;
+`)!!;
+	Program program = p.parse()!!;
 	assert(program.variables.len() == 2);
 	assert(program.variables[0].name == "PACKET_COUNT");
 	assert(program.variables[1].name == "PACKET");
 
-	ScalarValue value = ast::evaluate(program.variables[1].expression)!!;
+	ScalarValue value = ast::evaluate(program.variables[1].expression);
 	assert(value.kind == ScalarKind.PACKET);
 	assert(value.packet_val.len() == 2);
 	ScalarValue data = ast::attr_scalar(&value.packet_val[1].attributes[0])!!;
@@ -236,10 +235,10 @@ PACKET: Ether()/Raw(data="payload #1") # packet expression
 
 fn void test_parser_invalid_input() @test {
 	Parser p;
-	p.init("Ether(dst=\"unclosed)");
-	Result{Packet, String} parsed = p.parse_packet();
-	assert(!parsed.is_ok);
-	assert(parsed.error.len > 0);
+	p.init("Ether(dst=\"unclosed)")!!;
+	Packet? parsed = p.parse_packet();
+	if (try parsed) unreachable("expected parse to fail");
+	assert(p.lexer.last_error.contains("unterminated"));
 }
 
 fn void test_parser_operator_slash() @test {

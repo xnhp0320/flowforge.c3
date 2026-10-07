@@ -5,15 +5,6 @@ import flowforge::serializer;
 import flowforge::testutil;
 import std::collections::result;
 
-fn BuildResult build_default(String input) {
-	Registry reg = registry::create_default_registry();
-	return constructor::build(&reg, testutil::must_parse(input));
-}
-
-fn BuildResult build_with(String input, Registry* reg) {
-	return constructor::build(reg, testutil::must_parse(input));
-}
-
 fn SerializeResult serialize_into(PacketConstructor packet, char[] buffer) {
 	Registry reg = registry::create_default_registry();
 	return serializer::serialize_packet(packet, &reg, buffer);
@@ -26,10 +17,8 @@ fn PayloadFieldModifier* find_modifier(SerializeResult result, String protocol, 
 	return null;
 }
 
-fn char byte_at(char[] bytes, usz offset) => bytes[offset];
-
 fn ushort u16_at(char[] bytes, usz offset) {
-	return (ushort)(((ushort)byte_at(bytes, offset) << 8) | (ushort)byte_at(bytes, offset + 1));
+	return (ushort)(((ushort)testutil::byte_at(bytes, offset) << 8) | (ushort)testutil::byte_at(bytes, offset + 1));
 }
 
 fn void set_u16(char[] bytes, usz offset, ushort value) {
@@ -38,7 +27,7 @@ fn void set_u16(char[] bytes, usz offset, ushort value) {
 }
 
 fn void test_serializes_ether_ip_udp_scalars() @test {
-	BuildResult built = build_default(
+	BuildResult built = testutil::build_default(
 		`Ether(dst="ff:ff:ff:ff:ff:ff",src="00:11:22:33:44:55",type=2048)/IP(src="192.168.0.1",dst="192.168.0.2",ttl=64,proto=17)/UDP(sport=53,dport=54)`);
 	assert(built.ok);
 	char[64] buf;
@@ -46,38 +35,38 @@ fn void test_serializes_ether_ip_udp_scalars() @test {
 
 	assert(result.ok);
 	assert(result.payload.len == 42);
-	assert(byte_at(buf[..], 0) == 0xff);
-	assert(byte_at(buf[..], 5) == 0xff);
-	assert(byte_at(buf[..], 6) == 0x00);
-	assert(byte_at(buf[..], 7) == 0x11);
-	assert(byte_at(buf[..], 11) == 0x55);
+	assert(testutil::byte_at(buf[..], 0) == 0xff);
+	assert(testutil::byte_at(buf[..], 5) == 0xff);
+	assert(testutil::byte_at(buf[..], 6) == 0x00);
+	assert(testutil::byte_at(buf[..], 7) == 0x11);
+	assert(testutil::byte_at(buf[..], 11) == 0x55);
 	assert(u16_at(buf[..], 12) == 0x0800);
-	assert(byte_at(buf[..], 14) == 0x45);
-	assert(byte_at(buf[..], 22) == 64);
-	assert(byte_at(buf[..], 23) == 17);
-	assert(byte_at(buf[..], 26) == 192);
-	assert(byte_at(buf[..], 29) == 1);
-	assert(byte_at(buf[..], 33) == 2);
+	assert(testutil::byte_at(buf[..], 14) == 0x45);
+	assert(testutil::byte_at(buf[..], 22) == 64);
+	assert(testutil::byte_at(buf[..], 23) == 17);
+	assert(testutil::byte_at(buf[..], 26) == 192);
+	assert(testutil::byte_at(buf[..], 29) == 1);
+	assert(testutil::byte_at(buf[..], 33) == 2);
 	assert(u16_at(buf[..], 34) == 53);
 	assert(u16_at(buf[..], 36) == 54);
 	assert(u16_at(buf[..], 38) == 0);
 }
 
 fn void test_serializes_vlan_cross_byte_fields() @test {
-	BuildResult built = build_default("VLAN(prio=7,dei=1,vlan=4095,type=2048)");
+	BuildResult built = testutil::build_default("VLAN(prio=7,dei=1,vlan=4095,type=2048)");
 	assert(built.ok);
 	char[4] buf;
 	SerializeResult result = serialize_into(built.packet, buf[..]);
 
 	assert(result.ok);
 	assert(result.payload.len == 4);
-	assert(byte_at(buf[..], 0) == 0xff);
-	assert(byte_at(buf[..], 1) == 0xff);
+	assert(testutil::byte_at(buf[..], 0) == 0xff);
+	assert(testutil::byte_at(buf[..], 1) == 0xff);
 	assert(u16_at(buf[..], 2) == 0x0800);
 }
 
 fn void test_rejects_small_output_buffer() @test {
-	BuildResult built = build_default("Ether()/IP()/UDP()");
+	BuildResult built = testutil::build_default("Ether()/IP()/UDP()");
 	assert(built.ok);
 	char[8] buf;
 	SerializeResult result = serialize_into(built.packet, buf[..]);
@@ -88,7 +77,7 @@ fn void test_rejects_small_output_buffer() @test {
 }
 
 fn void test_payload_length_extends_serialized_packet() @test {
-	BuildResult built = build_default("Ether()/Payload(length=32)");
+	BuildResult built = testutil::build_default("Ether()/Payload(length=32)");
 	assert(built.ok);
 	char[64] buf;
 	for (usz i = 0; i < buf.len; i++) buf[i] = (char)0xff;
@@ -96,13 +85,13 @@ fn void test_payload_length_extends_serialized_packet() @test {
 
 	assert(result.ok);
 	assert(result.payload.len == 46);
-	assert(byte_at(buf[..], 14) == 0);
-	assert(byte_at(buf[..], 45) == 0);
-	assert(byte_at(buf[..], 46) == 0xff);
+	assert(testutil::byte_at(buf[..], 14) == 0);
+	assert(testutil::byte_at(buf[..], 45) == 0);
+	assert(testutil::byte_at(buf[..], 46) == 0xff);
 }
 
 fn void test_payload_total_length_extends_serialized_packet() @test {
-	BuildResult built = build_default("Ether()/IP()/Payload(total_length=100)");
+	BuildResult built = testutil::build_default("Ether()/IP()/Payload(total_length=100)");
 	assert(built.ok);
 	char[128] buf;
 	SerializeResult result = serialize_into(built.packet, buf[..]);
@@ -112,37 +101,37 @@ fn void test_payload_total_length_extends_serialized_packet() @test {
 }
 
 fn void test_serializes_ipv4_options_and_advances_next_header() @test {
-	BuildResult built = build_default("IP(options=IPOption_NOP()/IPOption_EOL())/TCP()");
+	BuildResult built = testutil::build_default("IP(options=IPOption_NOP()/IPOption_EOL())/TCP()");
 	assert(built.ok);
 	char[64] buf;
 	SerializeResult result = serialize_into(built.packet, buf[..]);
 
 	assert(result.ok);
 	assert(result.payload.len == 44);
-	assert(byte_at(buf[..], 0) == 0x46);
-	assert(byte_at(buf[..], 20) == 1);
-	assert(byte_at(buf[..], 21) == 0);
-	assert(byte_at(buf[..], 22) == 0);
-	assert(byte_at(buf[..], 23) == 0);
-	assert(byte_at(buf[..], 24 + 12) == 0x50);
+	assert(testutil::byte_at(buf[..], 0) == 0x46);
+	assert(testutil::byte_at(buf[..], 20) == 1);
+	assert(testutil::byte_at(buf[..], 21) == 0);
+	assert(testutil::byte_at(buf[..], 22) == 0);
+	assert(testutil::byte_at(buf[..], 23) == 0);
+	assert(testutil::byte_at(buf[..], 24 + 12) == 0x50);
 }
 
 fn void test_serializes_tcp_options_and_pads_header() @test {
-	BuildResult built = build_default("IP()/TCP(options=TCPOption_MSS(value=1460))");
+	BuildResult built = testutil::build_default("IP()/TCP(options=TCPOption_MSS(value=1460))");
 	assert(built.ok);
 	char[64] buf;
 	SerializeResult result = serialize_into(built.packet, buf[..]);
 
 	assert(result.ok);
 	assert(result.payload.len == 44);
-	assert(byte_at(buf[..], 20 + 12) == 0x60);
-	assert(byte_at(buf[..], 40) == 2);
-	assert(byte_at(buf[..], 41) == 4);
+	assert(testutil::byte_at(buf[..], 20 + 12) == 0x60);
+	assert(testutil::byte_at(buf[..], 40) == 2);
+	assert(testutil::byte_at(buf[..], 41) == 4);
 	assert(u16_at(buf[..], 42) == 1460);
 }
 
 fn void test_tcp_option_header_length_feeds_hardware_offload() @test {
-	BuildResult built = build_default("IP()/TCP(options=TCPOption_MSS(value=1460))/Payload(length=4)");
+	BuildResult built = testutil::build_default("IP()/TCP(options=TCPOption_MSS(value=1460))/Payload(length=4)");
 	assert(built.ok);
 	char[64] buf;
 	SerializeResult serialize = serialize_into(built.packet, buf[..]);
@@ -160,16 +149,16 @@ fn void test_tcp_option_header_length_feeds_hardware_offload() @test {
 }
 
 fn void test_serializes_first_range_value_into_base_payload() @test {
-	BuildResult built = build_default(`IP(src="[10.0.0.2-10.0.0.4]",dst="10.0.1.1-10.0.1.2")`);
+	BuildResult built = testutil::build_default(`IP(src="[10.0.0.2-10.0.0.4]",dst="10.0.1.1-10.0.1.2")`);
 	assert(built.ok);
 	char[20] buf;
 	SerializeResult result = serialize_into(built.packet, buf[..]);
 
 	assert(result.ok);
-	assert(byte_at(buf[..], 12) == 10);
-	assert(byte_at(buf[..], 15) == 2);
-	assert(byte_at(buf[..], 16) == 10);
-	assert(byte_at(buf[..], 19) == 1);
+	assert(testutil::byte_at(buf[..], 12) == 10);
+	assert(testutil::byte_at(buf[..], 15) == 2);
+	assert(testutil::byte_at(buf[..], 16) == 10);
+	assert(testutil::byte_at(buf[..], 19) == 1);
 	PayloadFieldModifier* src_modifier = find_modifier(result, "IP", "src");
 	assert(src_modifier != null);
 	assert(src_modifier.value_count == 3);
@@ -179,7 +168,7 @@ fn void test_serializes_first_range_value_into_base_payload() @test {
 }
 
 fn void test_single_value_range_fields_do_not_create_modifiers() @test {
-	BuildResult built = build_default(
+	BuildResult built = testutil::build_default(
 		`Ether()/IP(src="192.0.2.10",dst="192.0.2.1")/UDP(sport=12345,dport=5678)`);
 	assert(built.ok);
 	char[42] buf;
@@ -190,7 +179,7 @@ fn void test_single_value_range_fields_do_not_create_modifiers() @test {
 }
 
 fn void test_single_element_range_lists_do_not_create_modifiers() @test {
-	BuildResult built = build_default(
+	BuildResult built = testutil::build_default(
 		`Ether()/IP(src="[192.0.2.10]",dst="192.0.2.1")/UDP(sport="[12345]",dport=5678)`);
 	assert(built.ok);
 	char[42] buf;
@@ -201,16 +190,16 @@ fn void test_single_element_range_lists_do_not_create_modifiers() @test {
 }
 
 fn void test_serializes_first_ipv6_range_value_into_base_payload() @test {
-	BuildResult built = build_default(`IPv6(src="[2001:db8::2-2001:db8::4]")`);
+	BuildResult built = testutil::build_default(`IPv6(src="[2001:db8::2-2001:db8::4]")`);
 	assert(built.ok);
 	char[40] buf;
 	SerializeResult result = serialize_into(built.packet, buf[..]);
 
 	assert(result.ok);
-	assert(byte_at(buf[..], 8) == 0x20);
-	assert(byte_at(buf[..], 9) == 0x01);
-	assert(byte_at(buf[..], 22) == 0x00);
-	assert(byte_at(buf[..], 23) == 0x02);
+	assert(testutil::byte_at(buf[..], 8) == 0x20);
+	assert(testutil::byte_at(buf[..], 9) == 0x01);
+	assert(testutil::byte_at(buf[..], 22) == 0x00);
+	assert(testutil::byte_at(buf[..], 23) == 0x02);
 	PayloadFieldModifier* modifier = find_modifier(result, "IPv6", "src");
 	assert(modifier != null);
 	assert(modifier.value_count == 3);
@@ -219,7 +208,7 @@ fn void test_serializes_first_ipv6_range_value_into_base_payload() @test {
 fn void test_serializes_first_bit_range_value_into_base_payload() @test {
 	Registry reg = registry::create_empty_registry();
 	reg.register_header("MyHdr", { registry::fld("field", "b16_ranges") });
-	BuildResult built = build_with(`MyHdr(field="[100-102]")`, &reg);
+	BuildResult built = testutil::build_with(`MyHdr(field="[100-102]")`, &reg);
 	assert(built.ok);
 	char[2] buf;
 	SerializeResult result = serializer::serialize_packet(built.packet, &reg, buf[..]);
@@ -234,7 +223,7 @@ fn void test_serializes_first_bit_range_value_into_base_payload() @test {
 fn void test_integer_range_step_counts_and_applies_values() @test {
 	Registry reg = registry::create_empty_registry();
 	reg.register_header("MyHdr", { registry::fld("field", "b16_ranges") });
-	BuildResult built = build_with(`MyHdr(field="[1-100(step=2)]")`, &reg);
+	BuildResult built = testutil::build_with(`MyHdr(field="[1-100(step=2)]")`, &reg);
 	assert(built.ok);
 	char[2] buf;
 	SerializeResult result = serializer::serialize_packet(built.packet, &reg, buf[..]);
@@ -254,7 +243,7 @@ fn void test_integer_range_step_counts_and_applies_values() @test {
 fn void test_range_step_walks_all_congruence_groups() @test {
 	Registry reg = registry::create_empty_registry();
 	reg.register_header("MyHdr", { registry::fld("field", "b16_ranges") });
-	BuildResult built = build_with(`MyHdr(field="1-10(step=4)")`, &reg);
+	BuildResult built = testutil::build_with(`MyHdr(field="1-10(step=4)")`, &reg);
 	assert(built.ok);
 	char[2] buf;
 	SerializeResult result = serializer::serialize_packet(built.packet, &reg, buf[..]);
@@ -271,7 +260,7 @@ fn void test_range_step_walks_all_congruence_groups() @test {
 fn void test_mixed_range_list_uses_each_ranges_step() @test {
 	Registry reg = registry::create_empty_registry();
 	reg.register_header("MyHdr", { registry::fld("field", "b16_ranges") });
-	BuildResult built = build_with(`MyHdr(field="[1-5, 10-15(step=2)]")`, &reg);
+	BuildResult built = testutil::build_with(`MyHdr(field="[1-5, 10-15(step=2)]")`, &reg);
 	assert(built.ok);
 	char[2] buf;
 	SerializeResult result = serializer::serialize_packet(built.packet, &reg, buf[..]);
@@ -292,7 +281,7 @@ fn void test_mixed_range_list_uses_each_ranges_step() @test {
 fn void test_range_step_traverses_complete_range_when_step_exceeds_span() @test {
 	Registry reg = registry::create_empty_registry();
 	reg.register_header("MyHdr", { registry::fld("field", "b16_ranges") });
-	BuildResult built = build_with(`MyHdr(field="[1-5(step=2), 10-12(step=100)]")`, &reg);
+	BuildResult built = testutil::build_with(`MyHdr(field="[1-5(step=2), 10-12(step=100)]")`, &reg);
 	assert(built.ok);
 	char[2] buf;
 	SerializeResult result = serializer::serialize_packet(built.packet, &reg, buf[..]);
@@ -312,7 +301,7 @@ fn void test_range_step_traverses_complete_range_when_step_exceeds_span() @test 
 fn void test_unit_step_ranges_use_sequential_traversal() @test {
 	Registry reg = registry::create_empty_registry();
 	reg.register_header("MyHdr", { registry::fld("field", "b16_ranges") });
-	BuildResult built = build_with(`MyHdr(field="[1-3, 10-12(step=1)]")`, &reg);
+	BuildResult built = testutil::build_with(`MyHdr(field="[1-3, 10-12(step=1)]")`, &reg);
 	assert(built.ok);
 	char[2] buf;
 	SerializeResult result = serializer::serialize_packet(built.packet, &reg, buf[..]);
@@ -328,7 +317,7 @@ fn void test_unit_step_ranges_use_sequential_traversal() @test {
 fn void test_rand_ranges_apply_values_within_each_range() @test {
 	Registry reg = registry::create_empty_registry();
 	reg.register_header("MyHdr", { registry::fld("field", "b16_ranges") });
-	BuildResult built = build_with(`MyHdr(field="[10-12(rand), 100-101(rand)]")`, &reg);
+	BuildResult built = testutil::build_with(`MyHdr(field="[10-12(rand), 100-101(rand)]")`, &reg);
 	assert(built.ok);
 	char[2] buf;
 	SerializeResult result = serializer::serialize_packet(built.packet, &reg, buf[..]);
@@ -350,7 +339,7 @@ fn void test_rand_ranges_apply_values_within_each_range() @test {
 }
 
 fn void test_rand_ip_ranges_apply_values_within_bounds() @test {
-	BuildResult built = build_default(
+	BuildResult built = testutil::build_default(
 		`IP(src="10.0.0.10-10.0.0.12(rand)")/IPv6(src="2001:db8::10-2001:db8::12(rand)")`);
 	assert(built.ok);
 	char[60] buf;
@@ -364,13 +353,13 @@ fn void test_rand_ip_ranges_apply_values_within_bounds() @test {
 		assert(applied4.is_ok);
 		uint address4 = (uint)u16_at(buf[..], 12) << 16 | (uint)u16_at(buf[..], 14);
 		assert(applied4.value == (uint128)address4);
-		assert(byte_at(buf[..], 15) >= 10 && byte_at(buf[..], 15) <= 12);
+		assert(testutil::byte_at(buf[..], 15) >= 10 && testutil::byte_at(buf[..], 15) <= 12);
 		Result{uint128, String} applied6 = modifier6.apply(buf[..], index);
 		assert(applied6.is_ok);
 		uint128 address6 = 0;
 		foreach (b : buf[28:16]) address6 = (address6 << 8) | (uint128)b;
 		assert(applied6.value == address6);
-		assert(byte_at(buf[..], 43) >= 0x10 && byte_at(buf[..], 43) <= 0x12);
+		assert(testutil::byte_at(buf[..], 43) >= 0x10 && testutil::byte_at(buf[..], 43) <= 0x12);
 	}
 }
 
@@ -382,7 +371,7 @@ fn void test_pseudo_delta_uses_applied_addresses_for_all_traversals() @test {
 	};
 	foreach (program : programs) {
 		Registry reg = registry::create_default_registry();
-		BuildResult built = build_with(program, &reg);
+		BuildResult built = testutil::build_with(program, &reg);
 		assert(built.ok);
 		char[28] buf;
 		SerializeResult serialized = serializer::serialize_packet(built.packet, &reg, buf[..]);
@@ -404,7 +393,7 @@ fn void test_pseudo_delta_uses_applied_addresses_for_all_traversals() @test {
 }
 
 fn void test_ip_range_steps_count_and_apply_values() @test {
-	BuildResult built = build_default(
+	BuildResult built = testutil::build_default(
 		`IP(src="10.0.0.1-10.0.0.100(step=2)")/IPv6(src="2001:db8::1-2001:db8::ff(step=2)")`);
 	assert(built.ok);
 	char[60] buf;
@@ -416,17 +405,17 @@ fn void test_ip_range_steps_count_and_apply_values() @test {
 	assert(modifier4.value_count == 100);
 	assert(modifier6.value_count == 255);
 	assert(modifier4.apply(buf[..], 49).is_ok);
-	assert(byte_at(buf[..], 12) == 10 && byte_at(buf[..], 15) == 99);
+	assert(testutil::byte_at(buf[..], 12) == 10 && testutil::byte_at(buf[..], 15) == 99);
 	assert(modifier6.apply(buf[..], 127).is_ok);
-	assert(byte_at(buf[..], 43) == 0xff);
+	assert(testutil::byte_at(buf[..], 43) == 0xff);
 	assert(modifier4.apply(buf[..], 50).is_ok);
-	assert(byte_at(buf[..], 15) == 2);
+	assert(testutil::byte_at(buf[..], 15) == 2);
 	assert(modifier6.apply(buf[..], 254).is_ok);
-	assert(byte_at(buf[..], 43) == 0xfe);
+	assert(testutil::byte_at(buf[..], 43) == 0xfe);
 }
 
 fn void test_large_ipv6_stepped_range_saturates_count() @test {
-	BuildResult built = build_default(
+	BuildResult built = testutil::build_default(
 		`IPv6(src="::-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff(step=18446744073709551615)")`);
 	assert(built.ok);
 	char[40] buf;
@@ -438,7 +427,7 @@ fn void test_large_ipv6_stepped_range_saturates_count() @test {
 }
 
 fn void test_modifier_applies_list_index_to_payload() @test {
-	BuildResult built = build_default(`IP(src="[10.0.0.1-10.0.0.2, 10.0.1.1-10.0.1.2]")`);
+	BuildResult built = testutil::build_default(`IP(src="[10.0.0.1-10.0.0.2, 10.0.1.1-10.0.1.2]")`);
 	assert(built.ok);
 	char[20] buf;
 	SerializeResult result = serialize_into(built.packet, buf[..]);
@@ -447,14 +436,14 @@ fn void test_modifier_applies_list_index_to_payload() @test {
 	assert(modifier != null);
 
 	assert(modifier.apply(buf[..], 2).is_ok);
-	assert(byte_at(buf[..], 12) == 10);
-	assert(byte_at(buf[..], 13) == 0);
-	assert(byte_at(buf[..], 14) == 1);
-	assert(byte_at(buf[..], 15) == 1);
+	assert(testutil::byte_at(buf[..], 12) == 10);
+	assert(testutil::byte_at(buf[..], 13) == 0);
+	assert(testutil::byte_at(buf[..], 14) == 1);
+	assert(testutil::byte_at(buf[..], 15) == 1);
 }
 
 fn void test_modifier_rejects_out_of_range_index() @test {
-	BuildResult built = build_default(`IP(src="[10.0.0.1-10.0.0.2]")`);
+	BuildResult built = testutil::build_default(`IP(src="[10.0.0.1-10.0.0.2]")`);
 	assert(built.ok);
 	char[20] buf;
 	SerializeResult result = serialize_into(built.packet, buf[..]);
@@ -468,7 +457,7 @@ fn void test_modifier_rejects_out_of_range_index() @test {
 }
 
 fn void test_modified_payload_can_be_fixed_up_again() @test {
-	BuildResult built = build_default(
+	BuildResult built = testutil::build_default(
 		`Ether(type=2048)/IP(src="[192.168.0.1-192.168.0.3]",dst="192.168.0.2",ttl=64,proto=17)/UDP(sport=53,dport=54)`);
 	assert(built.ok);
 	char[64] buf;
@@ -483,15 +472,15 @@ fn void test_modified_payload_can_be_fixed_up_again() @test {
 	FixupResult fixup = serializer::fixup_packet(built.packet, &reg, serialize.payload);
 
 	assert(fixup.ok);
-	assert(byte_at(buf[..], 26) == 192);
-	assert(byte_at(buf[..], 29) == 3);
+	assert(testutil::byte_at(buf[..], 26) == 192);
+	assert(testutil::byte_at(buf[..], 29) == 3);
 	assert(serializer::fold_checksum(serializer::checksum_sum(buf[14:20])) == 0xffff);
 	uint pseudo = serializer::ipv4_pseudo_sum(buf[..], 14, (char)17, (ushort)8);
 	assert(serializer::fold_checksum(pseudo + serializer::checksum_sum(buf[34:8])) == 0xffff);
 }
 
 fn void test_planned_software_fixup_can_be_reused_after_range_mutation() @test {
-	BuildResult built = build_default(
+	BuildResult built = testutil::build_default(
 		`Ether(type=2048)/IP(src="[192.168.0.1-192.168.0.3]",dst="192.168.0.2",ttl=64,proto=17)/UDP(sport=53,dport=54)`);
 	assert(built.ok);
 	char[64] buf;
@@ -508,14 +497,14 @@ fn void test_planned_software_fixup_can_be_reused_after_range_mutation() @test {
 	FixupResult fixup = serializer::apply_fixup_plan(serialize.payload, plan.plan);
 
 	assert(fixup.ok);
-	assert(byte_at(buf[..], 29) == 3);
+	assert(testutil::byte_at(buf[..], 29) == 3);
 	assert(serializer::fold_checksum(serializer::checksum_sum(buf[14:20])) == 0xffff);
 	uint pseudo = serializer::ipv4_pseudo_sum(buf[..], 14, (char)17, (ushort)8);
 	assert(serializer::fold_checksum(pseudo + serializer::checksum_sum(buf[34:8])) == 0xffff);
 }
 
 fn void test_planned_hardware_fixup_reuses_offload_metadata_and_refreshes_pseudo_seed() @test {
-	BuildResult built = build_default(
+	BuildResult built = testutil::build_default(
 		`Ether(type=2048)/IP(src="[192.168.0.1-192.168.0.3]",dst="192.168.0.2",ttl=64,proto=17)/UDP(sport=53,dport=54)`);
 	assert(built.ok);
 	char[64] buf;
@@ -547,7 +536,7 @@ fn void test_planned_hardware_fixup_reuses_offload_metadata_and_refreshes_pseudo
 }
 
 fn void test_checksum_only_fixup_refreshes_seed_without_rewriting_lengths() @test {
-	BuildResult built = build_default(
+	BuildResult built = testutil::build_default(
 		`Ether(type=2048)/IP(src="[192.168.0.1-192.168.0.3]",dst="192.168.0.2",ttl=64,proto=17)/UDP(sport=53,dport=54)`);
 	assert(built.ok);
 	char[64] buf;
@@ -582,7 +571,7 @@ fn void test_checksum_only_fixup_refreshes_seed_without_rewriting_lengths() @tes
 }
 
 fn void test_software_fixup_updates_lengths_and_checksums() @test {
-	BuildResult built = build_default(
+	BuildResult built = testutil::build_default(
 		`Ether(type=2048)/IP(src="192.168.0.1",dst="192.168.0.2",ttl=64,proto=17)/UDP(sport=53,dport=54)`);
 	assert(built.ok);
 	char[64] buf;
@@ -601,7 +590,7 @@ fn void test_software_fixup_updates_lengths_and_checksums() @test {
 }
 
 fn void test_hardware_fixup_records_offload_request() @test {
-	BuildResult built = build_default(
+	BuildResult built = testutil::build_default(
 		`Ether(type=2048)/IP(src="192.168.0.1",dst="192.168.0.2",ttl=64,proto=17)/UDP(sport=53,dport=54)`);
 	assert(built.ok);
 	char[64] buf;
@@ -627,7 +616,7 @@ fn void test_hardware_fixup_records_offload_request() @test {
 }
 
 fn void test_disabled_checksum_mode_preserves_explicit_checksum_fields() @test {
-	BuildResult built = build_default(
+	BuildResult built = testutil::build_default(
 		`Ether(type=2048)/IP(src="192.168.0.1",dst="192.168.0.2",chksum=9,proto=17)/UDP(sport=53,dport=54,chksum=10)`);
 	assert(built.ok);
 	char[64] buf;
@@ -651,7 +640,7 @@ fn void test_disabled_checksum_mode_preserves_explicit_checksum_fields() @test {
 // outer IPv4/UDP plus an inner IPv4/TCP, and the outer UDP length must still be
 // written even though a later (inner) TCP header exists.
 fn void test_fixup_writes_outer_udp_length_alongside_inner_tcp() @test {
-	BuildResult built = build_default(
+	BuildResult built = testutil::build_default(
 		`Ether(dst="ff:ff:ff:ff:ff:ff",src="02:64:74:61:70:00")/IP(src="203.0.113.1",dst="203.0.113.2")/UDP()/VXLAN(vni=42)/Ether(dst="02:00:00:00:00:02",src="02:00:00:00:00:01")/IP(src="10.10.0.1",dst="10.10.0.2")/TCP(sport=2000,dport=2001,flags=2)`);
 	assert(built.ok);
 	char[128] buf;
@@ -671,7 +660,7 @@ fn void test_fixup_writes_outer_udp_length_alongside_inner_tcp() @test {
 }
 
 fn void test_vxlan_hardware_fixup_uses_tunnel_offload_and_zero_outer_udp_checksum() @test {
-	BuildResult built = build_default(
+	BuildResult built = testutil::build_default(
 		`Ether(dst="ff:ff:ff:ff:ff:ff",src="02:64:74:61:70:00")/IP(src="203.0.113.1",dst="203.0.113.2")/UDP()/VXLAN(vni=42)/Ether(dst="02:00:00:00:00:02",src="02:00:00:00:00:01")/IP(src="10.10.0.1",dst="10.10.0.2")/TCP(sport=2000,dport=2001,flags=2)`);
 	assert(built.ok);
 	char[128] buf;

@@ -1,4 +1,5 @@
 module flowforge::stats_format;
+import std::math;
 
 struct ScaledValue {
 	double value;
@@ -8,8 +9,7 @@ struct ScaledValue {
 fn ScaledValue scale_decimal(double value) {
 	String[4] prefixes = { "", "K", "M", "G" };
 	usz index = 0;
-	double v = value;
-	if (v < 0) v = -v;
+	double v = math::abs(value);
 	while (v >= 1000.0 && index + 1 < prefixes.len) {
 		v /= 1000.0;
 		index++;

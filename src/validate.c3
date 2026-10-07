@@ -5,60 +5,6 @@ import flowforge::value;
 import std::collections::result;
 import std::net;
 
-fn Result{bool, String} validate_mac(String s) {
-	MacAddr? mac = value::mac_parse(s);
-	if (catch mac) return result::err(string::tformat("invalid mac address '%s'", s));
-	return result::ok(true);
-}
-
-fn Result{bool, String} validate_ipv4(String s) {
-	if (catch net::ipv4_from_str(s)) {
-		return result::err(string::tformat("invalid ipv4 address '%s'", s));
-	}
-	return result::ok(true);
-}
-
-fn Result{bool, String} validate_ipv6(String s) {
-	if (catch net::ipv6_from_str(s)) {
-		return result::err(string::tformat("invalid ipv6 address '%s'", s));
-	}
-	return result::ok(true);
-}
-
-fn Result{bool, String} parse_prefix(String s, int max_prefix) {
-	Result{int, String} prefix = cvalue::parse_prefix(s, max_prefix);
-	if (!prefix.is_ok) return result::err(prefix.error);
-	return result::ok(true);
-}
-
-fn Result{bool, String} parse_ipv4_range(String raw) {
-	Result{IPv4Range, String} range = cvalue::parse_ipv4_range(raw);
-	if (!range.is_ok) return result::err(range.error);
-	return result::ok(true);
-}
-
-fn Result{bool, String} validate_ipv4_range(String s) => parse_ipv4_range(s);
-
-fn Result{bool, String} validate_ipv4_ranges(String s) {
-	Result{IPv4Range[], String} ranges = cvalue::parse_ipv4_ranges(s);
-	if (!ranges.is_ok) return result::err(ranges.error);
-	return result::ok(true);
-}
-
-fn Result{bool, String} parse_ipv6_range(String raw) {
-	Result{IPv6Range, String} range = cvalue::parse_ipv6_range(raw);
-	if (!range.is_ok) return result::err(range.error);
-	return result::ok(true);
-}
-
-fn Result{bool, String} validate_ipv6_range(String s) => parse_ipv6_range(s);
-
-fn Result{bool, String} validate_ipv6_ranges(String s) {
-	Result{IPv6Range[], String} ranges = cvalue::parse_ipv6_ranges(s);
-	if (!ranges.is_ok) return result::err(ranges.error);
-	return result::ok(true);
-}
-
 faultdef UNKNOWN_TYPE;
 
 fn bool is_bit_ranges_type(String type_name) {
@@ -112,37 +58,54 @@ fn Result{bool, String} validate_scalar_type(String type_name, ScalarValue value
 			if (value.kind != ScalarKind.STRING) {
 				return result::err("mac address must be a string value");
 			}
-			return validate_mac(value.string_val);
+			if (catch value::mac_parse(value.string_val)) {
+				return result::err(string::tformat("invalid mac address '%s'", value.string_val));
+			}
+			return result::ok(true);
 		case "ipv4":
 			if (value.kind != ScalarKind.STRING) {
 				return result::err("ipv4 address must be a string value");
 			}
-			return validate_ipv4(value.string_val);
+			if (catch net::ipv4_from_str(value.string_val)) {
+				return result::err(string::tformat("invalid ipv4 address '%s'", value.string_val));
+			}
+			return result::ok(true);
 		case "ipv6":
 			if (value.kind != ScalarKind.STRING) {
 				return result::err("ipv6 address must be a string value");
 			}
-			return validate_ipv6(value.string_val);
+			if (catch net::ipv6_from_str(value.string_val)) {
+				return result::err(string::tformat("invalid ipv6 address '%s'", value.string_val));
+			}
+			return result::ok(true);
 		case "ipv4_range":
 			if (value.kind != ScalarKind.STRING) {
 				return result::err("ipv4 range must be a string value");
 			}
-			return validate_ipv4_range(value.string_val);
+			Result{IPv4Range, String} range = cvalue::parse_ipv4_range(value.string_val);
+			if (!range.is_ok) return result::err(range.error);
+			return result::ok(true);
 		case "ipv6_range":
 			if (value.kind != ScalarKind.STRING) {
 				return result::err("ipv6 range must be a string value");
 			}
-			return validate_ipv6_range(value.string_val);
+			Result{IPv6Range, String} range = cvalue::parse_ipv6_range(value.string_val);
+			if (!range.is_ok) return result::err(range.error);
+			return result::ok(true);
 		case "ipv4_ranges":
 			if (value.kind != ScalarKind.STRING) {
 				return result::err("ipv4 ranges must be a string value");
 			}
-			return validate_ipv4_ranges(value.string_val);
+			Result{IPv4Range[], String} ranges = cvalue::parse_ipv4_ranges(value.string_val);
+			if (!ranges.is_ok) return result::err(ranges.error);
+			return result::ok(true);
 		case "ipv6_ranges":
 			if (value.kind != ScalarKind.STRING) {
 				return result::err("ipv6 ranges must be a string value");
 			}
-			return validate_ipv6_ranges(value.string_val);
+			Result{IPv6Range[], String} ranges = cvalue::parse_ipv6_ranges(value.string_val);
+			if (!ranges.is_ok) return result::err(ranges.error);
+			return result::ok(true);
 		default:
 			usz? width = bit_width_for_type(type_name);
 			if (catch width) {
