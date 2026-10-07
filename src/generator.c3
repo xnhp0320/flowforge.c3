@@ -15,8 +15,6 @@ alias MaybeCount = Maybe{ulong};
 
 const usz GENERATOR_DEFAULT_MAX_PACKET_SIZE = 2048;
 const usz GENERATOR_MAX_PACKET_SIZE = 10240;
-const ulong ULONG_MAX = 0xFFFFFFFFFFFFFFFF;
-
 struct FlowIndexPlan {
 	ulong total_flows;
 	ulong planned_packets;
@@ -99,16 +97,19 @@ fn char[]? GeneratedPacket.payload_for_flow(&self, ulong flow_index, Allocator a
 	return payload;
 }
 
-<* Patches an already-populated buffer to represent a specific flow. *>
-fn bool GeneratedPacket.apply_flow(&self, ulong flow_index, char[] payload, List{String}* errors) {
-	if (flow_index >= self.flow_plan.planned_packets) {
+// Shared flow-apply core. `validate` checks flow index and payload size (the
+// DPDK hot path validates once up front and skips per-packet checks);
+// `checksums_only` refreshes checksum fields without rewriting lengths.
+fn bool GeneratedPacket.apply_flow_common(&self, ulong flow_index, char[] payload, List{String}* errors, bool validate, bool checksums_only) {
+	if (validate && flow_index >= self.flow_plan.planned_packets) {
 		errors.push("flow index is outside the planned packet count");
 		return false;
 	}
-	if (payload.len < self.base_payload.len) {
+	if (validate && payload.len < self.base_payload.len) {
 		errors.push("payload buffer is smaller than the packet length");
 		return false;
 	}
+	if (self.modifiers.len() == 0) return true;
 
 	char[] packet_payload = payload[:self.base_payload.len];
 	uint ipv4_pseudo_delta = 0;
@@ -116,50 +117,29 @@ fn bool GeneratedPacket.apply_flow(&self, ulong flow_index, char[] payload, List
 		return false;
 	}
 
-	FixupResult fixed = serializer::apply_fixup_plan(packet_payload, self.fixup_plan);
+	FixupResult fixed = checksums_only
+		? serializer::apply_checksum_fixup_plan(packet_payload, self.fixup_plan, ipv4_pseudo_delta)
+		: serializer::apply_fixup_plan(packet_payload, self.fixup_plan);
 	foreach (e : fixed.errors) errors.push(e);
 	return fixed.ok;
+}
+
+<* Patches an already-populated buffer to represent a specific flow. *>
+fn bool GeneratedPacket.apply_flow(&self, ulong flow_index, char[] payload, List{String}* errors) {
+	return self.apply_flow_common(flow_index, payload, errors, true, false);
 }
 
 <* Patches a payload that was copied from `base_payload` and refreshes only
    checksum fields. Length fields are assumed to already be fixed in the
    seeded base payload. *>
 fn bool GeneratedPacket.apply_flow_checksums_only(&self, ulong flow_index, char[] payload, List{String}* errors) {
-	if (flow_index >= self.flow_plan.planned_packets) {
-		errors.push("flow index is outside the planned packet count");
-		return false;
-	}
-	if (payload.len < self.base_payload.len) {
-		errors.push("payload buffer is smaller than the packet length");
-		return false;
-	}
-	if (self.modifiers.len() == 0) return true;
-
-	char[] packet_payload = payload[:self.base_payload.len];
-	uint ipv4_pseudo_delta = 0;
-	if (!apply_flow_index(packet_payload, self.modifiers, self.fixup_plan, flow_index, errors, &ipv4_pseudo_delta)) {
-		return false;
-	}
-
-	FixupResult fixed = serializer::apply_checksum_fixup_plan(packet_payload, self.fixup_plan, ipv4_pseudo_delta);
-	foreach (e : fixed.errors) errors.push(e);
-	return fixed.ok;
+	return self.apply_flow_common(flow_index, payload, errors, true, true);
 }
 
 <* Unchecked DPDK live Tx hot-path variant. The runtime validates flow indexes
    and payload sizing once before workers are launched. *>
 fn bool GeneratedPacket.apply_flow_checksums_only_unchecked(&self, ulong flow_index, char[] payload, List{String}* errors) {
-	if (self.modifiers.len() == 0) return true;
-
-	char[] packet_payload = payload[:self.base_payload.len];
-	uint ipv4_pseudo_delta = 0;
-	if (!apply_flow_index(packet_payload, self.modifiers, self.fixup_plan, flow_index, errors, &ipv4_pseudo_delta)) {
-		return false;
-	}
-
-	FixupResult fixed = serializer::apply_checksum_fixup_plan(packet_payload, self.fixup_plan, ipv4_pseudo_delta);
-	foreach (e : fixed.errors) errors.push(e);
-	return fixed.ok;
+	return self.apply_flow_common(flow_index, payload, errors, false, true);
 }
 
 fn bool PacketGenerator.serialize_generated(&self, PacketConstructor packet, FixupOptions fixup_options, GeneratedPacket* out, List{String}* errors, Allocator alloc) {
@@ -213,25 +193,23 @@ fn List{PayloadFieldModifier} copy_modifiers(PayloadFieldModifier[] src, Allocat
 	return dst;
 }
 
-fn UIntPatchRange[] dup_uint_ranges(UIntPatchRange[] src, Allocator alloc) {
-	if (src.len == 0) return {};
-	UIntPatchRange[] dst = alloc::new_array(alloc, UIntPatchRange, (sz)src.len);
-	foreach (i, r : src) dst[i] = r;
+macro @dup_ranges($Type, #src, Allocator #alloc) {
+	if (#src.len == 0) return {};
+	$Type[] dst = alloc::new_array(#alloc, $Type, (sz)#src.len);
+	foreach (i, r : #src) dst[i] = r;
 	return dst;
+}
+
+fn UIntPatchRange[] dup_uint_ranges(UIntPatchRange[] src, Allocator alloc) {
+	return @dup_ranges(UIntPatchRange, src, alloc);
 }
 
 fn IPv4PatchRange[] dup_ipv4_ranges(IPv4PatchRange[] src, Allocator alloc) {
-	if (src.len == 0) return {};
-	IPv4PatchRange[] dst = alloc::new_array(alloc, IPv4PatchRange, (sz)src.len);
-	foreach (i, r : src) dst[i] = r;
-	return dst;
+	return @dup_ranges(IPv4PatchRange, src, alloc);
 }
 
 fn IPv6PatchRange[] dup_ipv6_ranges(IPv6PatchRange[] src, Allocator alloc) {
-	if (src.len == 0) return {};
-	IPv6PatchRange[] dst = alloc::new_array(alloc, IPv6PatchRange, (sz)src.len);
-	foreach (i, r : src) dst[i] = r;
-	return dst;
+	return @dup_ranges(IPv6PatchRange, src, alloc);
 }
 
 <* Releases the base payload and modifiers. Only call this when prepare() was
@@ -262,8 +240,8 @@ fn bool plan_flow_indexes(List{PayloadFieldModifier} modifiers, MaybeCount packe
 			errors.push(string::tformat("modifier '%s.%s' has zero values", m.protocol, m.field));
 			return false;
 		}
-		if (plan.total_flows > ULONG_MAX / m.value_count) {
-			errors.push("range expansion has more than 18446744073709551615 flows");
+		if (plan.total_flows > ulong::max / m.value_count) {
+			errors.push(string::tformat("range expansion has more than %d flows", ulong::max));
 			return false;
 		}
 		plan.total_flows *= m.value_count;
