@@ -885,12 +885,6 @@ fn void print_live_stats(WorkerContext[] tx_ctxs, RxWorkerContext[] rx_ctxs, ush
 		double total_rx_pps = (double)total_rx_delta / sample_seconds;
 		double total_rx_bps = total_rx_pps * (double)packet_len * 8.0;
 
-		EthStats stats;
-		(void)dpdk::ff_eth_stats_get(port_id, &stats);
-		ulong imiss_delta = counter_delta(stats.imissed, state.previous_imissed);
-		ulong ierrors_delta = counter_delta(stats.ierrors, state.previous_ierrors);
-		state.previous_imissed = stats.imissed;
-		state.previous_ierrors = stats.ierrors;
 		io::printf("\033[2J\033[H");
 		io::printn("FlowForge live stats");
 		io::printfn("elapsed: %s", stats_format::format_elapsed_seconds((ulong)(now - state.start)));
@@ -918,7 +912,7 @@ fn void print_live_stats(WorkerContext[] tx_ctxs, RxWorkerContext[] rx_ctxs, ush
 			foreach (i, ctx : tx_ctxs) {
 				if (ctx.port_id != port) continue;
 				WorkerStatsView w = make_worker_stats_view(&tx_ctxs[i]);
-				double pps = (double)counter_delta(w.tx_sent, state.previous_tx_sent[i]) / seconds;
+				double pps = (double)counter_delta(w.tx_sent, state.previous_tx_sent[i]) / sample_seconds;
 				state.previous_tx_sent[i] = w.tx_sent;
 				sent += w.tx_sent;
 				tx_errors += w.tx_errors;
@@ -932,8 +926,8 @@ fn void print_live_stats(WorkerContext[] tx_ctxs, RxWorkerContext[] rx_ctxs, ush
 			foreach (i, ctx : rx_ctxs) {
 				if (ctx.port_id != port) continue;
 				RxWorkerStatsView w = make_rx_worker_stats_view(&rx_ctxs[i]);
-				double pps = (double)counter_delta(w.rx_received, state.previous_rx_received[i]) / seconds;
-				double bps = (double)counter_delta(w.rx_bytes, state.previous_rx_bytes[i]) * 8.0 / seconds;
+				double pps = (double)counter_delta(w.rx_received, state.previous_rx_received[i]) / sample_seconds;
+				double bps = (double)counter_delta(w.rx_bytes, state.previous_rx_bytes[i]) * 8.0 / sample_seconds;
 				state.previous_rx_received[i] = w.rx_received;
 				state.previous_rx_bytes[i] = w.rx_bytes;
 				received += w.rx_received;
@@ -1162,47 +1156,6 @@ fn bool run_traffic(ushort[] ports, Mempool* mbuf_pool, GeneratedPacket* packet,
 	return ok;
 }
 
-fn void capture_rx_workers(ulong rx_threads, List{String}* errors, Result* result, List{WorkerResult}* rx_workers) @private {
-	uint[RUNTIME_MAX_LCORES] lcores;
-	uint nworkers = dpdk::ff_worker_lcores(&lcores[0], (uint)RUNTIME_MAX_LCORES);
-	if (nworkers < rx_threads) {
-		errors.push(string::tformat("RX_THREADS(%d) requires %d worker lcore(s), but DPDK_ARGS enabled %d; use DPDK_ARGS like \"-l 0-%d\"",
-			rx_threads, rx_threads, nworkers, rx_threads));
-		return;
-	}
-
-	RxWorkerContext[RUNTIME_MAX_LCORES] ctxs;
-	usz launched = 0;
-	bool ok = true;
-
-	for (ulong worker = 0; worker < rx_threads; worker++) {
-		RxWorkerContext* context = &ctxs[worker];
-		*context = {};
-		context.worker_id = worker;
-		context.lcore_id = lcores[worker];
-		context.port_id = RUNTIME_PORT_ID;
-		context.queue_id = (ushort)worker;
-		context.batch_size = RUNTIME_RX_BATCH_SIZE;
-
-		int rc = dpdk::rte_eal_remote_launch(&run_rx_worker, context, lcores[worker]);
-		if (rc < 0) {
-			errors.push(string::tformat("rte_eal_remote_launch failed for RX lcore %d: %s", lcores[worker], dpdk::strerror(-rc)));
-			ok = false;
-			break;
-		}
-		launched++;
-	}
-
-	if (!ok) runtime_stop_requested.store(true);
-	for (usz worker = 0; worker < launched; worker++) {
-		(void)dpdk::rte_eal_wait_lcore(lcores[worker]);
-	}
-	for (usz worker = 0; worker < launched; worker++) {
-		result.rx_received += ctxs[worker].rx_received;
-		result.rx_bytes += ctxs[worker].rx_bytes;
-		rx_workers.push(make_rx_worker_result(&ctxs[worker]));
-	}
-}
 // --- public entry points --------------------------------------------------
 
 <* Initialises the EAL for a checked program (mirrors C++ Runtime::init). *>
