@@ -277,9 +277,8 @@ fn int run_file_mode(Packet packet, generator::MaybeCount count, String output_p
 	defer (void)out_file.close();
 
 	PcapWriter writer = { .output = &out_file };
-	PcapWriteResult header = writer.write_header();
-	if (!header.ok) {
-		foreach (e : header.errors) io::eprintfn("ERROR: %s", e);
+	if (catch err = writer.write_header()) {
+		io::eprintfn("ERROR: failed to write pcap output (%s)", err.description);
 		return 1;
 	}
 
@@ -297,9 +296,8 @@ fn int run_file_mode(Packet packet, generator::MaybeCount count, String output_p
 			foreach (e : errors) io::eprintfn("ERROR: %s", e);
 			return 1;
 		}
-		PcapWriteResult record = writer.write_packet(payload);
-		if (!record.ok) {
-			foreach (e : record.errors) io::eprintfn("ERROR: %s", e);
+		if (catch err = writer.write_packet(payload)) {
+			io::eprintfn("ERROR: failed to write pcap output (%s)", err.description);
 			return 1;
 		}
 	}

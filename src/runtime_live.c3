@@ -1418,9 +1418,8 @@ fn void run_capture(Config config, String eal_program_name, RunOptions options, 
 		out = opened;
 		have_file = true;
 		writer = { .output = &out };
-		PcapWriteResult header = writer.write_header();
-		if (!header.ok) {
-			foreach (e : header.errors) result.errors.push(e);
+		if (catch err = writer.write_header()) {
+			result.errors.push(string::tformat("failed to write pcap output (%s)", err.description));
 			(void)out.close();
 			dpdk::rte_mempool_free(pool);
 			cleanup_eal(&result.warnings);
@@ -1447,9 +1446,8 @@ fn void run_capture(Config config, String eal_program_name, RunOptions options, 
 				for (ushort i = 0; i < nb_rx; i++) {
 					char* data = mbufs[i].mtod();
 					uint len = mbufs[i].pkt_len;
-					PcapWriteResult record = writer.write_packet(data[:len]);
-					if (!record.ok) {
-						foreach (e : record.errors) result.errors.push(e);
+					if (catch err = writer.write_packet(data[:len])) {
+						result.errors.push(string::tformat("failed to write pcap output (%s)", err.description));
 						write_error = true;
 						break;
 					}

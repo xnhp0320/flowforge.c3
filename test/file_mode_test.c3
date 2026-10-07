@@ -172,8 +172,8 @@ fn void test_pcap_writer_writes_classic_ethernet_pcap() @test {
 		0x22, 0x33, 0x44, 0x55, 0x08, 0x00,
 	};
 
-	assert(writer.write_header().ok);
-	assert(writer.write_packet(payload[..]).ok);
+	writer.write_header()!!;
+	writer.write_packet(payload[..])!!;
 
 	char[] bytes = output.array_view();
 	assert(bytes.len == 24 + 16 + 14);
@@ -194,9 +194,10 @@ fn void test_pcap_writer_requires_header() @test {
 	PcapWriter writer = { .output = &output };
 
 	char[1] payload = { 0 };
-	PcapWriteResult result = writer.write_packet(payload[..]);
-
-	assert(!result.ok);
-	assert(result.errors.len == 1);
-	assert(result.errors[0] == "pcap header must be written before packet records");
+	if (catch err = writer.write_packet(payload[..])) {
+		assert(err == pcap::HEADER_NOT_WRITTEN);
+	}
+	else {
+		unreachable("expected write_packet to fail");
+	}
 }
