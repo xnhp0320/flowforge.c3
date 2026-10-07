@@ -14,8 +14,6 @@ alias MaybeULong = Maybe{ulong};
 faultdef BUILD_ERR;
 
 const ushort RUNTIME_MAX_TX_BATCH_SIZE = 256;
-const ulong ULONG_MAX = 0xFFFFFFFFFFFFFFFF;
-const ushort USHORT_MAX = 0xFFFF;
 
 struct WorkerResult {
 	ushort port_id;
@@ -113,12 +111,18 @@ fn Runtime runtime_with_default() {
 
 fn Runtime runtime_with_registry(Registry* registry) => { .registry = registry };
 
-fn result::Result{String[], String} split_dpdk_args(String args) {
+faultdef SPLIT_ERR;
+
+// Splits a DPDK_ARGS string on whitespace, honoring single/double quotes and
+// backslash escapes. Returns a fault when the string ends mid-escape or
+// mid-quote.
+fn String[]? split_dpdk_args(String args) {
 	List{String} parts;
 	parts.tinit();
 	DString current;
 	current.tinit();
-	char quote = 0;
+	bool in_quote = false;
+	char quote_char;
 	bool escaping = false;
 
 	foreach (c : args) {
@@ -131,16 +135,17 @@ fn result::Result{String[], String} split_dpdk_args(String args) {
 			escaping = true;
 			continue;
 		}
-		if (quote != 0) {
-			if (c == quote) {
-				quote = 0;
+		if (in_quote) {
+			if (c == quote_char) {
+				in_quote = false;
 			} else {
 				current.append_char(c);
 			}
 			continue;
 		}
 		if (c == '\'' || c == '"') {
-			quote = c;
+			in_quote = true;
+			quote_char = c;
 			continue;
 		}
 		if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
@@ -153,12 +158,12 @@ fn result::Result{String[], String} split_dpdk_args(String args) {
 		current.append_char(c);
 	}
 
-	if (escaping) return result::err("DPDK_ARGS ends with an unfinished escape");
-	if (quote != 0) return result::err("DPDK_ARGS contains an unterminated quote");
+	if (escaping) return SPLIT_ERR~;
+	if (in_quote) return SPLIT_ERR~;
 	if (current.len()) {
 		parts.push(current.str_view().copy(tmem));
 	}
-	return result::ok(parts.to_tarray());
+	return parts.to_tarray();
 }
 
 fn ulong? positive_integer_var(Variable* variable, String name, List{String}* errors) {
@@ -267,11 +272,11 @@ fn Config? build_config(Program program, Result* result, RunOptions options) {
 		} else if (dpdk_args_value.kind != ScalarKind.STRING) {
 			result.errors.push("variable 'DPDK_ARGS' must be a string expression");
 		} else {
-			result::Result{String[], String} args = split_dpdk_args(dpdk_args_value.string_val);
-			if (!args.is_ok) {
-				result.errors.push(args.error);
+			String[]? args = split_dpdk_args(dpdk_args_value.string_val);
+			if (catch args) {
+				result.errors.push("DPDK_ARGS ends with an unfinished escape or an unterminated quote");
 			} else {
-				config.dpdk_args = args.value;
+				config.dpdk_args = args;
 			}
 		}
 	}
@@ -285,7 +290,7 @@ fn Config? build_config(Program program, Result* result, RunOptions options) {
 	if (try pmd_threads_var) {
 		ulong? threads = positive_integer_var(pmd_threads_var, "PMD_THREADS", &result.errors);
 		if (try threads) {
-			if (threads > USHORT_MAX) {
+			if (threads > ushort::max) {
 				result.errors.push("variable 'PMD_THREADS' exceeds the supported Tx queue count");
 			} else {
 				config.pmd_threads.set(threads);
@@ -297,7 +302,7 @@ fn Config? build_config(Program program, Result* result, RunOptions options) {
 	if (try rx_threads_var) {
 		ulong? threads = positive_integer_var(rx_threads_var, "RX_THREADS", &result.errors);
 		if (try threads) {
-			if (threads > USHORT_MAX) {
+			if (threads > ushort::max) {
 				result.errors.push("variable 'RX_THREADS' exceeds the supported Rx queue count");
 			} else {
 				config.rx_threads.set(threads);
@@ -334,7 +339,7 @@ fn ulong checked_transmission_count(ulong flow_count, ulong clone_count, Result*
 		result.errors.push("clone count must be positive");
 		return 0;
 	}
-	if (flow_count > ULONG_MAX / clone_count) {
+	if (flow_count > ulong::max / clone_count) {
 		result.errors.push("clone expansion has more than 18446744073709551615 packets");
 		return 0;
 	}
@@ -346,7 +351,7 @@ fn ulong checked_total_transmission_count(ulong planned_flows, ulong worker_coun
 	if (result.errors.len()) return 0;
 	ulong multiplier = options.split ? port_count : worker_count;
 	if (multiplier == 0) return 0;
-	if (per_worker > ULONG_MAX / multiplier) {
+	if (per_worker > ulong::max / multiplier) {
 		result.errors.push("worker expansion has more than 18446744073709551615 packets");
 		return 0;
 	}

@@ -54,15 +54,19 @@ extern fn long time(long* tloc) @private;
 const int SIGINT = 2;
 const int SIGTERM = 15;
 
-bool runtime_stop_requested @private = false;
+// Cross-thread stop flag: written by the signal handler on the main thread,
+// polled by DPDK worker threads — must be atomic.
+Atomic{bool} runtime_stop_requested;
 
 
 fn void request_runtime_stop(int sig) @private {
-	runtime_stop_requested = true;
+	runtime_stop_requested.store(true);
 }
 
+fn bool runtime_stop_requested_load() @private => runtime_stop_requested.load();
+
 fn void install_signal_handlers() @private {
-	runtime_stop_requested = false;
+	runtime_stop_requested.store(false);
 	signal(SIGINT, &request_runtime_stop);
 	signal(SIGTERM, &request_runtime_stop);
 }
@@ -260,7 +264,7 @@ fn uint mbuf_count_for(ulong worker_count, ushort batch_size) @private {
 	ulong in_flight = worker_count * ((ulong)RUNTIME_TX_DESCRIPTORS + (ulong)batch_size * 2);
 	ulong cache_reserve = (worker_count + 1) * RUNTIME_MBUF_CACHE_SIZE;
 	ulong total = in_flight + cache_reserve;
-	if (total < 16383) total = 16383;
+	if (total < RUNTIME_CAPTURE_MBUF_COUNT) total = RUNTIME_CAPTURE_MBUF_COUNT;
 	return (uint)total;
 }
 
@@ -670,7 +674,7 @@ fn int run_worker_once_impl(WorkerContext* context) @private {
 	if (planned == 0) return 0;
 
 	ulong transmitted = 0;
-	while (transmitted < planned && !runtime_stop_requested) {
+	while (transmitted < planned && !runtime_stop_requested_load()) {
 		ulong remaining = planned - transmitted;
 		ushort count = (ushort)(context.batch_size < remaining ? context.batch_size : remaining);
 		if (alloc_worker_mbufs(context, &batch[0], count) != 0) {
@@ -714,7 +718,7 @@ fn int run_worker_impl(WorkerContext* context) @private {
 	if (context.flow_count == 0) return 0;
 
 	ulong global_transmission = 0;
-	while (!runtime_stop_requested) {
+	while (!runtime_stop_requested_load()) {
 		ushort count = context.batch_size;
 		if (alloc_worker_mbufs(context, &batch[0], count) != 0) {
 			context.warnings.push(string::tformat("ff_pktmbuf_raw_alloc_bulk failed for %d packet(s): %s", count, dpdk::strerror(dpdk::ff_rte_errno())));
@@ -757,7 +761,7 @@ fn int run_rx_worker(void* arg) @private {
 fn int run_rx_worker_impl(RxWorkerContext* context) @private {
 	Mbuf*[RUNTIME_MAX_RX_BATCH_SIZE] mbufs;
 
-	while (!runtime_stop_requested) {
+	while (!runtime_stop_requested_load()) {
 		ushort nb_rx = dpdk::ff_eth_rx_burst(context.port_id, context.queue_id, &mbufs[0], context.batch_size);
 		if (nb_rx == 0) continue;
 
@@ -844,9 +848,49 @@ fn ulong counter_delta(ulong current, ulong previous) @private {
 
 fn void print_live_stats(WorkerContext[] tx_ctxs, RxWorkerContext[] rx_ctxs, ushort[] ports, usz packet_len, ushort batch_size, RunOptions options, LiveStatsState* state, long now) @private {
 	@pool() {
-		double seconds = (double)(now - state.last);
-		if (seconds <= 0.0) seconds = 1.0;
+		double sample_seconds = (double)(now - state.last);
+		if (sample_seconds <= 0.0) sample_seconds = 1.0;
 		state.last = now;
+
+		ulong total_tx_sent = 0;
+		ulong total_tx_attempted = 0;
+		ulong total_tx_delta = 0;
+		ulong[RUNTIME_MAX_LCORES] tx_deltas;
+		for (usz i = 0; i < tx_ctxs.len; i++) {
+			WorkerStatsView worker = make_worker_stats_view(&tx_ctxs[i]);
+			ulong delta = counter_delta(worker.tx_sent, state.previous_tx_sent[i]);
+			state.previous_tx_sent[i] = worker.tx_sent;
+			tx_deltas[i] = delta;
+			total_tx_sent += worker.tx_sent;
+			total_tx_attempted += worker.tx_attempted;
+			total_tx_delta += delta;
+		}
+
+		ulong total_rx_received = 0;
+		ulong total_rx_bytes = 0;
+		ulong total_rx_delta = 0;
+		ulong[RUNTIME_MAX_LCORES] rx_deltas;
+		for (usz i = 0; i < rx_ctxs.len; i++) {
+			RxWorkerStatsView worker = make_rx_worker_stats_view(&rx_ctxs[i]);
+			ulong delta = counter_delta(worker.rx_received, state.previous_rx_received[i]);
+			state.previous_rx_received[i] = worker.rx_received;
+			rx_deltas[i] = delta;
+			total_rx_received += worker.rx_received;
+			total_rx_bytes += worker.rx_bytes;
+			total_rx_delta += delta;
+		}
+
+		double total_tx_pps = (double)total_tx_delta / sample_seconds;
+		double total_tx_bps = total_tx_pps * (double)packet_len * 8.0;
+		double total_rx_pps = (double)total_rx_delta / sample_seconds;
+		double total_rx_bps = total_rx_pps * (double)packet_len * 8.0;
+
+		EthStats stats;
+		(void)dpdk::ff_eth_stats_get(port_id, &stats);
+		ulong imiss_delta = counter_delta(stats.imissed, state.previous_imissed);
+		ulong ierrors_delta = counter_delta(stats.ierrors, state.previous_ierrors);
+		state.previous_imissed = stats.imissed;
+		state.previous_ierrors = stats.ierrors;
 		io::printf("\033[2J\033[H");
 		io::printn("FlowForge live stats");
 		io::printfn("elapsed: %s", stats_format::format_elapsed_seconds((ulong)(now - state.start)));
@@ -943,7 +987,6 @@ fn bool wait_for_all(uint[] lcores, WorkerContext[] tx_ctxs, RxWorkerContext[] r
 	usz joined_count = 0;
 	uint wait_state = dpdk::LCORE_WAIT_STATE;
 	LiveStatsState state;
-	state = {};
 	state.start = time(null);
 	state.last = state.start;
 	state.next = state.start + (long)interval;
@@ -1097,7 +1140,7 @@ fn bool run_traffic(ushort[] ports, Mempool* mbuf_pool, GeneratedPacket* packet,
 		}
 	}
 
-	if (!ok) runtime_stop_requested = true;
+	if (!ok) runtime_stop_requested.store(true);
 
 	ok = wait_for_all(used_lcores[:tx_launched + rx_launched], tx_ctxs[:tx_launched], rx_ctxs[:rx_launched], ports, packet.base_payload.len, batch_size, options, errors) && ok;
 
@@ -1119,6 +1162,47 @@ fn bool run_traffic(ushort[] ports, Mempool* mbuf_pool, GeneratedPacket* packet,
 	return ok;
 }
 
+fn void capture_rx_workers(ulong rx_threads, List{String}* errors, Result* result, List{WorkerResult}* rx_workers) @private {
+	uint[RUNTIME_MAX_LCORES] lcores;
+	uint nworkers = dpdk::ff_worker_lcores(&lcores[0], (uint)RUNTIME_MAX_LCORES);
+	if (nworkers < rx_threads) {
+		errors.push(string::tformat("RX_THREADS(%d) requires %d worker lcore(s), but DPDK_ARGS enabled %d; use DPDK_ARGS like \"-l 0-%d\"",
+			rx_threads, rx_threads, nworkers, rx_threads));
+		return;
+	}
+
+	RxWorkerContext[RUNTIME_MAX_LCORES] ctxs;
+	usz launched = 0;
+	bool ok = true;
+
+	for (ulong worker = 0; worker < rx_threads; worker++) {
+		RxWorkerContext* context = &ctxs[worker];
+		*context = {};
+		context.worker_id = worker;
+		context.lcore_id = lcores[worker];
+		context.port_id = RUNTIME_PORT_ID;
+		context.queue_id = (ushort)worker;
+		context.batch_size = RUNTIME_RX_BATCH_SIZE;
+
+		int rc = dpdk::rte_eal_remote_launch(&run_rx_worker, context, lcores[worker]);
+		if (rc < 0) {
+			errors.push(string::tformat("rte_eal_remote_launch failed for RX lcore %d: %s", lcores[worker], dpdk::strerror(-rc)));
+			ok = false;
+			break;
+		}
+		launched++;
+	}
+
+	if (!ok) runtime_stop_requested.store(true);
+	for (usz worker = 0; worker < launched; worker++) {
+		(void)dpdk::rte_eal_wait_lcore(lcores[worker]);
+	}
+	for (usz worker = 0; worker < launched; worker++) {
+		result.rx_received += ctxs[worker].rx_received;
+		result.rx_bytes += ctxs[worker].rx_bytes;
+		rx_workers.push(make_rx_worker_result(&ctxs[worker]));
+	}
+}
 // --- public entry points --------------------------------------------------
 
 <* Initialises the EAL for a checked program (mirrors C++ Runtime::init). *>
@@ -1354,7 +1438,7 @@ fn void run_capture(Config config, String eal_program_name, RunOptions options, 
 
 		if (have_file) {
 			Mbuf*[RUNTIME_MAX_RX_BATCH_SIZE] mbufs;
-			while (!runtime_stop_requested) {
+			while (!runtime_stop_requested_load()) {
 				ushort nb_rx = dpdk::ff_eth_rx_burst(ports[0], 0, &mbufs[0], RUNTIME_RX_BATCH_SIZE);
 				if (nb_rx == 0) continue;
 
