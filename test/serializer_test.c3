@@ -570,6 +570,19 @@ fn void test_checksum_only_fixup_refreshes_seed_without_rewriting_lengths() @tes
 	assert(u16_at(buf[..], 40) == serializer::fold_checksum(pseudo));
 }
 
+fn void test_fixup_reports_both_missing_pseudo_headers() @test {
+	char[28] payload;
+	PacketFixupPlan plan = {};
+	plan.udp.set({ .offset = 0, .checksum = FixupMode.SOFTWARE });
+	plan.tcp.set({ .offset = 8, .header_len = 20, .checksum = FixupMode.SOFTWARE });
+
+	FixupResult result = serializer::apply_fixup_plan(payload[..], plan);
+	assert(!result.ok);
+	assert(result.errors.len == 2);
+	assert(result.errors[0] == "UDP checksum requires IPv4 or IPv6 header");
+	assert(result.errors[1] == "TCP checksum requires IPv4 or IPv6 header");
+}
+
 fn void test_software_fixup_updates_lengths_and_checksums() @test {
 	BuildResult built = testutil::build_default(
 		`Ether(type=2048)/IP(src="192.168.0.1",dst="192.168.0.2",ttl=64,proto=17)/UDP(sport=53,dport=54)`);

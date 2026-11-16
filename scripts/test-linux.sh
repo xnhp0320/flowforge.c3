@@ -6,6 +6,8 @@ tool_root=${FFG_TOOL_ROOT:-$HOME/.cache/flowforge-tools}
 c3=${FFG_C3C:-$tool_root/c3-build/c3c}
 python=${FFG_PYTHON:-$tool_root/venv/bin/python}
 cd "$repo"
+"$python" -m unittest discover -s scripts -p 'test_*.py'
+"$python" scripts/lint_critical_path.py
 "$c3" build ffg --build-dir "$tool_root/ffg-build" --output-dir "$tool_root/ffg-bin"
 "$c3" test ffg --build-dir "$tool_root/ffg-build" --output-dir "$tool_root/ffg-bin" --test-quiet
 FFG_RUNTIME="$tool_root/ffg-bin/ffg" "$python" -m pytest tests/cli -q -p no:cacheprovider

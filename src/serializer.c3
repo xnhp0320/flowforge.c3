@@ -1298,7 +1298,7 @@ fn uint? l4_pseudo(char[] payload, PacketFixupPlan plan, char protocol, uint l4_
 // Shared UDP fixup: length field (unless `write_lengths`), then the checksum
 // ladder (zero, software internet checksum with the UDP 0xffff rule, or the
 // hardware-offload pseudo sum).
-fn void apply_udp_fixup(char[] payload, PacketFixupPlan plan, bool write_lengths, bool use_delta, uint ipv4_pseudo_delta, List{String}* errors) @private {
+fn String apply_udp_fixup(char[] payload, PacketFixupPlan plan, bool write_lengths, bool use_delta, uint ipv4_pseudo_delta) @private {
 	UdpFixup udp = plan.udp.value;
 	usz udp_len = payload.len - udp.offset;
 	if (write_lengths) {
@@ -1309,7 +1309,7 @@ fn void apply_udp_fixup(char[] payload, PacketFixupPlan plan, bool write_lengths
 
 		uint? pseudo = l4_pseudo(payload, plan, UDP_PROTOCOL, (uint)udp_len, use_delta, ipv4_pseudo_delta);
 		if (catch pseudo) {
-			errors.push("UDP checksum requires IPv4 or IPv6 header");
+			return "UDP checksum requires IPv4 or IPv6 header";
 		}
 		else if (udp.checksum == FixupMode.SOFTWARE) {
 			ushort checksum = internet_checksum(pseudo + checksum_sum(payload[udp.offset : udp_len]));
@@ -1320,17 +1320,18 @@ fn void apply_udp_fixup(char[] payload, PacketFixupPlan plan, bool write_lengths
 			write_u16(payload, udp.offset + UDP_CHECKSUM_OFF, fold_checksum(pseudo));
 		}
 	}
+	return "";
 }
 
 // Shared TCP fixup: checksum ladder over the whole TCP segment.
-fn void apply_tcp_fixup(char[] payload, PacketFixupPlan plan, bool use_delta, uint ipv4_pseudo_delta, List{String}* errors) @private {
+fn String apply_tcp_fixup(char[] payload, PacketFixupPlan plan, bool use_delta, uint ipv4_pseudo_delta) @private {
 	TcpFixup tcp = plan.tcp.value;
 	write_u16(payload, tcp.offset + TCP_CHECKSUM_OFF, 0);
 	usz tcp_len = payload.len - tcp.offset;
 
 	uint? pseudo = l4_pseudo(payload, plan, TCP_PROTOCOL, (uint)tcp_len, use_delta, ipv4_pseudo_delta);
 	if (catch pseudo) {
-		errors.push("TCP checksum requires IPv4 or IPv6 header");
+		return "TCP checksum requires IPv4 or IPv6 header";
 	}
 	else if (tcp.checksum == FixupMode.SOFTWARE) {
 		write_u16(payload, tcp.offset + TCP_CHECKSUM_OFF, internet_checksum(pseudo + checksum_sum(payload[tcp.offset : tcp_len])));
@@ -1338,6 +1339,7 @@ fn void apply_tcp_fixup(char[] payload, PacketFixupPlan plan, bool use_delta, ui
 	else if (tcp.checksum == FixupMode.HARDWARE_OFFLOAD) {
 		write_u16(payload, tcp.offset + TCP_CHECKSUM_OFF, fold_checksum(pseudo));
 	}
+	return "";
 }
 
 fn void apply_icmp_fixup(char[] payload, IcmpFixup icmp) @private {
@@ -1352,8 +1354,8 @@ fn void apply_icmp_fixup(char[] payload, IcmpFixup icmp) @private {
 fn FixupResult apply_fixup_plan_common(char[] payload, PacketFixupPlan plan, bool checksums_only, uint ipv4_pseudo_delta) @private {
 	FixupResult result;
 	result.offload = plan.offload;
-	List{String} errors;
-	errors.tinit();
+	String udp_error = "";
+	String tcp_error = "";
 
 	if (plan.outer_ipv4.has_value) apply_ipv4_fixup(payload, plan.outer_ipv4.value, !checksums_only);
 	if (!checksums_only && plan.outer_ipv6.has_value) apply_ipv6_fixup(payload, plan.outer_ipv6.value);
@@ -1365,16 +1367,24 @@ fn FixupResult apply_fixup_plan_common(char[] payload, PacketFixupPlan plan, boo
 
 	if (plan.ipv4.has_value) apply_ipv4_fixup(payload, plan.ipv4.value, !checksums_only);
 	if (!checksums_only && plan.ipv6.has_value) apply_ipv6_fixup(payload, plan.ipv6.value);
-	if (plan.udp.has_value) apply_udp_fixup(payload, plan, !checksums_only, checksums_only, ipv4_pseudo_delta, &errors);
+	if (plan.udp.has_value) udp_error = apply_udp_fixup(payload, plan, !checksums_only, checksums_only, ipv4_pseudo_delta);
 	if (plan.tcp.has_value && plan.tcp.value.checksum != FixupMode.DISABLED) {
-		apply_tcp_fixup(payload, plan, checksums_only, ipv4_pseudo_delta, &errors);
+		tcp_error = apply_tcp_fixup(payload, plan, checksums_only, ipv4_pseudo_delta);
 	}
 	if (plan.icmp.has_value && plan.icmp.value.checksum != FixupMode.DISABLED) {
 		apply_icmp_fixup(payload, plan.icmp.value);
 	}
 
-	if (errors.len()) {
-		result.errors = errors.to_tarray();
+	usz error_count = 0;
+	if (udp_error.len != 0) error_count++;
+	if (tcp_error.len != 0) error_count++;
+	if (error_count != 0) {
+		// critical-path-lint: error-only
+		String[] errors = mem::temp_array(String, (sz)error_count);
+		usz i = 0;
+		if (udp_error.len != 0) errors[i++] = udp_error;
+		if (tcp_error.len != 0) errors[i] = tcp_error;
+		result.errors = errors;
 		return result;
 	}
 	result.ok = true;

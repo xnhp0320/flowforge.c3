@@ -98,9 +98,19 @@ Run unit tests and PCAP-based checks locally, including on macOS:
 
 ```sh
 c3c test
+python3 -m unittest discover -s scripts -p 'test_*.py'
+python3 scripts/lint_critical_path.py
 python3 -m pip install -r tests/requirements.txt
 python3 -m pytest tests/cli tests/e2e --backend pcap --runtime "$PWD/build/ffg" -q
 ```
+
+The critical-path lint follows calls from packet processing loops and reports
+common repeated temporary allocations without a per-packet or per-batch
+`@pool()` boundary. One-time initialization and calls inside a resetting pool
+are allowed. A failure-only allocation can use a directly preceding
+`// critical-path-lint: error-only` comment; review that branch when adding the
+exception. The current checksum success path allocates no temporary error list.
+This source-level check does not prove that returned data outlives a pool.
 
 Live TAP tests require Linux, root, and `/dev/net/tun`:
 
