@@ -852,38 +852,27 @@ fn void print_live_stats(WorkerContext[] tx_ctxs, RxWorkerContext[] rx_ctxs, ush
 		if (sample_seconds <= 0.0) sample_seconds = 1.0;
 		state.last = now;
 
-		ulong total_tx_sent = 0;
-		ulong total_tx_attempted = 0;
-		ulong total_tx_delta = 0;
+		// Sample once; per-port and overall rates reuse these deltas.
+		WorkerStatsView[RUNTIME_MAX_LCORES] tx_views;
 		ulong[RUNTIME_MAX_LCORES] tx_deltas;
 		for (usz i = 0; i < tx_ctxs.len; i++) {
 			WorkerStatsView worker = make_worker_stats_view(&tx_ctxs[i]);
-			ulong delta = counter_delta(worker.tx_sent, state.previous_tx_sent[i]);
+			tx_views[i] = worker;
+			tx_deltas[i] = counter_delta(worker.tx_sent, state.previous_tx_sent[i]);
 			state.previous_tx_sent[i] = worker.tx_sent;
-			tx_deltas[i] = delta;
-			total_tx_sent += worker.tx_sent;
-			total_tx_attempted += worker.tx_attempted;
-			total_tx_delta += delta;
 		}
 
-		ulong total_rx_received = 0;
-		ulong total_rx_bytes = 0;
-		ulong total_rx_delta = 0;
+		RxWorkerStatsView[RUNTIME_MAX_LCORES] rx_views;
 		ulong[RUNTIME_MAX_LCORES] rx_deltas;
+		ulong[RUNTIME_MAX_LCORES] rx_byte_deltas;
 		for (usz i = 0; i < rx_ctxs.len; i++) {
 			RxWorkerStatsView worker = make_rx_worker_stats_view(&rx_ctxs[i]);
-			ulong delta = counter_delta(worker.rx_received, state.previous_rx_received[i]);
+			rx_views[i] = worker;
+			rx_deltas[i] = counter_delta(worker.rx_received, state.previous_rx_received[i]);
+			rx_byte_deltas[i] = counter_delta(worker.rx_bytes, state.previous_rx_bytes[i]);
 			state.previous_rx_received[i] = worker.rx_received;
-			rx_deltas[i] = delta;
-			total_rx_received += worker.rx_received;
-			total_rx_bytes += worker.rx_bytes;
-			total_rx_delta += delta;
+			state.previous_rx_bytes[i] = worker.rx_bytes;
 		}
-
-		double total_tx_pps = (double)total_tx_delta / sample_seconds;
-		double total_tx_bps = total_tx_pps * (double)packet_len * 8.0;
-		double total_rx_pps = (double)total_rx_delta / sample_seconds;
-		double total_rx_bps = total_rx_pps * (double)packet_len * 8.0;
 
 		io::printf("\033[2J\033[H");
 		io::printn("FlowForge live stats");
@@ -911,9 +900,8 @@ fn void print_live_stats(WorkerContext[] tx_ctxs, RxWorkerContext[] rx_ctxs, ush
 			io::printn("tx workers:");
 			foreach (i, ctx : tx_ctxs) {
 				if (ctx.port_id != port) continue;
-				WorkerStatsView w = make_worker_stats_view(&tx_ctxs[i]);
-				double pps = (double)counter_delta(w.tx_sent, state.previous_tx_sent[i]) / sample_seconds;
-				state.previous_tx_sent[i] = w.tx_sent;
+				WorkerStatsView w = tx_views[i];
+				double pps = (double)tx_deltas[i] / sample_seconds;
 				sent += w.tx_sent;
 				tx_errors += w.tx_errors;
 				tx_pps += pps;
@@ -925,11 +913,9 @@ fn void print_live_stats(WorkerContext[] tx_ctxs, RxWorkerContext[] rx_ctxs, ush
 			io::printn("rx workers:");
 			foreach (i, ctx : rx_ctxs) {
 				if (ctx.port_id != port) continue;
-				RxWorkerStatsView w = make_rx_worker_stats_view(&rx_ctxs[i]);
-				double pps = (double)counter_delta(w.rx_received, state.previous_rx_received[i]) / sample_seconds;
-				double bps = (double)counter_delta(w.rx_bytes, state.previous_rx_bytes[i]) * 8.0 / sample_seconds;
-				state.previous_rx_received[i] = w.rx_received;
-				state.previous_rx_bytes[i] = w.rx_bytes;
+				RxWorkerStatsView w = rx_views[i];
+				double pps = (double)rx_deltas[i] / sample_seconds;
+				double bps = (double)rx_byte_deltas[i] * 8.0 / sample_seconds;
 				received += w.rx_received;
 				bytes += w.rx_bytes;
 				rx_pps += pps;
