@@ -384,7 +384,7 @@ fn void test_pseudo_delta_uses_applied_addresses_for_all_traversals() @test {
 			foreach (&modifier : serialized.modifiers) {
 				Result{uint128, String} applied = modifier.apply(buf[..], i % modifier.value_count);
 				assert(applied.is_ok);
-				delta += modifier.ipv4_pseudo_delta(plan.plan, applied.value);
+				delta += modifier.ipv4_pseudo_delta(&plan.plan, applied.value);
 			}
 			uint actual = serializer::ipv4_pseudo_sum(buf[..], 0, (char)17, (ushort)8);
 			assert(serializer::fold_checksum(base + delta) == serializer::fold_checksum(actual));
@@ -494,7 +494,7 @@ fn void test_planned_software_fixup_can_be_reused_after_range_mutation() @test {
 	assert(modifier != null);
 
 	assert(modifier.apply(buf[..], 2).is_ok);
-	FixupResult fixup = serializer::apply_fixup_plan(serialize.payload, plan.plan);
+	FixupResult fixup = serializer::apply_fixup_plan(serialize.payload, &plan.plan);
 
 	assert(fixup.ok);
 	assert(testutil::byte_at(buf[..], 29) == 3);
@@ -521,7 +521,7 @@ fn void test_planned_hardware_fixup_reuses_offload_metadata_and_refreshes_pseudo
 	assert(modifier != null);
 
 	assert(modifier.apply(buf[..], 2).is_ok);
-	FixupResult fixup = serializer::apply_fixup_plan(serialize.payload, plan.plan);
+	FixupResult fixup = serializer::apply_fixup_plan(serialize.payload, &plan.plan);
 
 	assert(fixup.ok);
 	assert(fixup.offload.layer3 == OffloadLayer3.IPV4);
@@ -552,15 +552,15 @@ fn void test_checksum_only_fixup_refreshes_seed_without_rewriting_lengths() @tes
 	PayloadFieldModifier* modifier = find_modifier(serialize, "IP", "src");
 	assert(modifier != null);
 
-	FixupResult initial = serializer::apply_fixup_plan(serialize.payload, plan.plan);
+	FixupResult initial = serializer::apply_fixup_plan(serialize.payload, &plan.plan);
 	assert(initial.ok);
 	set_u16(buf[..], 16, 0xaaaa);
 	set_u16(buf[..], 38, 0xbbbb);
 
 	Result{uint128, String} applied = modifier.apply(buf[..], 2);
 	assert(applied.is_ok);
-	uint delta = modifier.ipv4_pseudo_delta(plan.plan, applied.value);
-	FixupResult fixup = serializer::apply_checksum_fixup_plan(serialize.payload, plan.plan, delta);
+	uint delta = modifier.ipv4_pseudo_delta(&plan.plan, applied.value);
+	FixupResult fixup = serializer::apply_checksum_fixup_plan(serialize.payload, &plan.plan, delta);
 
 	assert(fixup.ok);
 	assert(u16_at(buf[..], 16) == 0xaaaa);
@@ -576,7 +576,7 @@ fn void test_fixup_reports_both_missing_pseudo_headers() @test {
 	plan.udp.set({ .offset = 0, .checksum = FixupMode.SOFTWARE });
 	plan.tcp.set({ .offset = 8, .header_len = 20, .checksum = FixupMode.SOFTWARE });
 
-	FixupResult result = serializer::apply_fixup_plan(payload[..], plan);
+	FixupResult result = serializer::apply_fixup_plan(payload[..], &plan);
 	assert(!result.ok);
 	assert(result.errors.len == 2);
 	assert(result.errors[0] == "UDP checksum requires IPv4 or IPv6 header");
