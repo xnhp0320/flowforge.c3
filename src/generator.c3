@@ -113,13 +113,13 @@ fn bool GeneratedPacket.apply_flow_common(&self, ulong flow_index, char[] payloa
 
 	char[] packet_payload = payload[:self.base_payload.len];
 	uint ipv4_pseudo_delta = 0;
-	if (!apply_flow_index(packet_payload, self.modifiers, self.fixup_plan, flow_index, errors, &ipv4_pseudo_delta)) {
+	if (!apply_flow_index(packet_payload, self.modifiers, &self.fixup_plan, flow_index, errors, &ipv4_pseudo_delta)) {
 		return false;
 	}
 
 	FixupResult fixed = checksums_only
-		? serializer::apply_checksum_fixup_plan(packet_payload, self.fixup_plan, ipv4_pseudo_delta)
-		: serializer::apply_fixup_plan(packet_payload, self.fixup_plan);
+		? serializer::apply_checksum_fixup_plan(packet_payload, &self.fixup_plan, ipv4_pseudo_delta)
+		: serializer::apply_fixup_plan(packet_payload, &self.fixup_plan);
 	foreach (e : fixed.errors) errors.push(e);
 	return fixed.ok;
 }
@@ -155,7 +155,7 @@ fn bool PacketGenerator.serialize_generated(&self, PacketConstructor packet, Fix
 	foreach (e : plan.errors) errors.push(e);
 	if (!plan.ok) return false;
 
-	FixupResult fixed = serializer::apply_fixup_plan(serialized.payload, plan.plan);
+	FixupResult fixed = serializer::apply_fixup_plan(serialized.payload, &plan.plan);
 	foreach (e : fixed.errors) errors.push(e);
 	if (!fixed.ok) return false;
 
@@ -258,7 +258,7 @@ fn bool plan_flow_indexes(List{PayloadFieldModifier} modifiers, MaybeCount packe
 	return true;
 }
 
-fn bool apply_flow_index(char[] payload, List{PayloadFieldModifier} modifiers, PacketFixupPlan fixup_plan, ulong flow_index, List{String}* errors, uint* ipv4_pseudo_delta) {
+fn bool apply_flow_index(char[] payload, List{PayloadFieldModifier} modifiers, PacketFixupPlan* fixup_plan, ulong flow_index, List{String}* errors, uint* ipv4_pseudo_delta) {
 	ulong remaining = flow_index;
 	// Treat modifier values as mixed-radix digits. The first modifier is the
 	// least-significant digit, so it completes a full round before the next

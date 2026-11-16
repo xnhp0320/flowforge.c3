@@ -537,7 +537,7 @@ fn uint ipv4_replace_delta(uint old_value, uint new_value) {
 
 <* Computes the change from the base IPv4 address using the value returned by
    apply(). Never samples random traversal again or reads the packet buffer. *>
-fn uint PayloadFieldModifier.ipv4_pseudo_delta(&self, PacketFixupPlan plan, uint128 applied_value) {
+fn uint PayloadFieldModifier.ipv4_pseudo_delta(&self, PacketFixupPlan* plan, uint128 applied_value) {
 	if (self.patch_kind != ModifierPatchKind.IPV4) return 0;
 	if (!plan.ipv4.has_value) return 0;
 	usz ip_offset = plan.ipv4.value.offset;
@@ -1229,7 +1229,7 @@ fn FixupPlanResult plan_packet_fixups(PacketConstructor packet, Registry* regist
 
 faultdef PSEUDO_HEADER_MISSING;
 
-fn uint? l4_pseudo_sum(char[] payload, PacketFixupPlan plan, char protocol, uint l4_len) @private {
+fn uint? l4_pseudo_sum(char[] payload, PacketFixupPlan* plan, char protocol, uint l4_len) @private {
 	if (plan.ipv4.has_value) {
 		return ipv4_pseudo_sum(payload, plan.ipv4.value.offset, protocol, (ushort)l4_len);
 	}
@@ -1239,7 +1239,7 @@ fn uint? l4_pseudo_sum(char[] payload, PacketFixupPlan plan, char protocol, uint
 	return PSEUDO_HEADER_MISSING~;
 }
 
-fn uint? l4_pseudo_sum_with_delta(char[] payload, PacketFixupPlan plan, char protocol, uint l4_len, uint ipv4_pseudo_delta) @private {
+fn uint? l4_pseudo_sum_with_delta(char[] payload, PacketFixupPlan* plan, char protocol, uint l4_len, uint ipv4_pseudo_delta) @private {
 	uint base;
 	if (protocol == UDP_PROTOCOL && plan.udp_ipv4_pseudo_base.has_value) {
 		base = plan.udp_ipv4_pseudo_base.value;
@@ -1288,7 +1288,7 @@ fn void apply_ipv6_fixup(char[] payload, Ipv6Fixup ipv6) {
 
 // Computes the pseudo-header sum for one L4 segment, using the precomputed
 // IPv4 pseudo base plus delta when `use_delta` (checksum-only refresh).
-fn uint? l4_pseudo(char[] payload, PacketFixupPlan plan, char protocol, uint l4_len, bool use_delta, uint ipv4_pseudo_delta) @private {
+fn uint? l4_pseudo(char[] payload, PacketFixupPlan* plan, char protocol, uint l4_len, bool use_delta, uint ipv4_pseudo_delta) @private {
 	if (use_delta) {
 		return l4_pseudo_sum_with_delta(payload, plan, protocol, l4_len, ipv4_pseudo_delta);
 	}
@@ -1298,7 +1298,7 @@ fn uint? l4_pseudo(char[] payload, PacketFixupPlan plan, char protocol, uint l4_
 // Shared UDP fixup: length field (unless `write_lengths`), then the checksum
 // ladder (zero, software internet checksum with the UDP 0xffff rule, or the
 // hardware-offload pseudo sum).
-fn String apply_udp_fixup(char[] payload, PacketFixupPlan plan, bool write_lengths, bool use_delta, uint ipv4_pseudo_delta) @private {
+fn String apply_udp_fixup(char[] payload, PacketFixupPlan* plan, bool write_lengths, bool use_delta, uint ipv4_pseudo_delta) @private {
 	UdpFixup udp = plan.udp.value;
 	usz udp_len = payload.len - udp.offset;
 	if (write_lengths) {
@@ -1324,7 +1324,7 @@ fn String apply_udp_fixup(char[] payload, PacketFixupPlan plan, bool write_lengt
 }
 
 // Shared TCP fixup: checksum ladder over the whole TCP segment.
-fn String apply_tcp_fixup(char[] payload, PacketFixupPlan plan, bool use_delta, uint ipv4_pseudo_delta) @private {
+fn String apply_tcp_fixup(char[] payload, PacketFixupPlan* plan, bool use_delta, uint ipv4_pseudo_delta) @private {
 	TcpFixup tcp = plan.tcp.value;
 	write_u16(payload, tcp.offset + TCP_CHECKSUM_OFF, 0);
 	usz tcp_len = payload.len - tcp.offset;
@@ -1351,7 +1351,7 @@ fn void apply_icmp_fixup(char[] payload, IcmpFixup icmp) @private {
 // Applies a fixup plan. `checksums_only` refreshes checksum fields only:
 // length fields are not rewritten, and IPv4 pseudo sums use the precomputed
 // base plus `ipv4_pseudo_delta` (for packets copied from a fixed-up base).
-fn FixupResult apply_fixup_plan_common(char[] payload, PacketFixupPlan plan, bool checksums_only, uint ipv4_pseudo_delta) @private {
+fn FixupResult apply_fixup_plan_common(char[] payload, PacketFixupPlan* plan, bool checksums_only, uint ipv4_pseudo_delta) @private {
 	FixupResult result;
 	result.offload = plan.offload;
 	String udp_error = "";
@@ -1391,14 +1391,14 @@ fn FixupResult apply_fixup_plan_common(char[] payload, PacketFixupPlan plan, boo
 	return result;
 }
 
-fn FixupResult apply_fixup_plan(char[] payload, PacketFixupPlan plan) {
+fn FixupResult apply_fixup_plan(char[] payload, PacketFixupPlan* plan) {
 	return apply_fixup_plan_common(payload, plan, false, 0);
 }
 
 <* Refreshes checksum fields only. Use this when the payload was copied from a
    fully fixed-up base packet and only flow-varying fields were patched. This
    deliberately does not rewrite IPv4/IPv6/UDP length fields. *>
-fn FixupResult apply_checksum_fixup_plan(char[] payload, PacketFixupPlan plan, uint ipv4_pseudo_delta = 0) {
+fn FixupResult apply_checksum_fixup_plan(char[] payload, PacketFixupPlan* plan, uint ipv4_pseudo_delta = 0) {
 	return apply_fixup_plan_common(payload, plan, true, ipv4_pseudo_delta);
 }
 
@@ -1408,5 +1408,5 @@ fn FixupResult fixup_packet(PacketConstructor packet, Registry* registry, char[]
 	if (!plan.ok) {
 		return { .ok = false, .errors = plan.errors, .offload = plan.plan.offload };
 	}
-	return apply_fixup_plan(payload, plan.plan);
+	return apply_fixup_plan(payload, &plan.plan);
 }
